@@ -1,0 +1,13 @@
+import { requireIdentityAdmin } from "@/lib/api/identity-auth";
+import { apiSuccess } from "@/lib/api/responses";
+import { prisma } from "@/lib/db/prisma";
+
+export async function GET() {
+  const context = await requireIdentityAdmin();
+  if ("error" in context) return context.error;
+
+  return apiSuccess(await prisma.role.findMany({
+    include: { permissions: { include: { permission: true } } },
+    orderBy: { name: "asc" }
+  }));
+}

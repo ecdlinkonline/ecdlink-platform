@@ -1,0 +1,39 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  background: #ffffff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  background: #ffffff;
+  color: #111827;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+}
+
+.dark body {
+  background: #020617;
+  color: #ffffff;
+}
+
+::selection {
+  background: rgba(46, 125, 50, 0.18);
+}
+
+.grid-pattern {
+  background-image:
+    linear-gradient(rgba(30, 58, 138, 0.07) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(30, 58, 138, 0.07) 1px, transparent 1px);
+  background-size: 42px 42px;
+}

@@ -1,0 +1,1977 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum UserRole {
+  SUPER_ADMIN
+  ECD_CENTRE
+  SUPPLIER
+  DONOR
+  FUNDING_ORGANISATION
+  SYSTEM
+}
+
+enum UserStatus {
+  ACTIVE
+  INVITED
+  SUSPENDED
+  ARCHIVED
+}
+
+enum CentreUserRole {
+  PRINCIPAL
+  OWNER
+  ADMINISTRATOR
+  PRACTITIONER
+  FINANCE
+  VOLUNTEER
+  READ_ONLY
+}
+
+enum OwnershipStatus {
+  ACTIVE
+  INVITED
+  SUSPENDED
+  REMOVED
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  EXPIRED
+  REVOKED
+}
+
+enum RegistrationStatus {
+  REGISTERED
+  IN_PROGRESS
+  NOT_REGISTERED
+}
+
+enum MembershipStatus {
+  ACTIVE
+  PENDING
+  EXPIRED
+  OVERDUE
+  CANCELLED
+}
+
+enum ParticipationStatus {
+  ACTIVE
+  INACTIVE
+  PENDING
+}
+
+enum ComplianceStatus {
+  COMPLIANT
+  ATTENTION
+  ACTION_REQUIRED
+}
+
+enum ReadinessStatus {
+  READY
+  IN_PROGRESS
+  NEEDS_ATTENTION
+}
+
+enum ActivityType {
+  PROFILE
+  MEMBERSHIP
+  PROCUREMENT
+  COMPLIANCE
+  FUNDING
+  NOTE
+}
+
+enum DocumentStatus {
+  UPLOADED
+  MISSING
+  EXPIRED
+  EXPIRING_SOON
+  VERIFIED
+  REJECTED
+}
+
+enum VerificationStatus {
+  PENDING
+  PENDING_REVIEW
+  VERIFIED
+  REJECTED
+  REQUIRES_RESUBMISSION
+}
+
+enum OrderStatus {
+  DRAFT
+  SUBMITTED
+  AWAITING_APPROVAL
+  APPROVED
+  REJECTED
+  PACKED
+  OUT_FOR_DELIVERY
+  DELIVERED
+  CANCELLED
+}
+
+enum DeliveryStatus {
+  PENDING
+  PACKED
+  OUT_FOR_DELIVERY
+  DELIVERED
+  CANCELLED
+  FAILED
+}
+
+enum ProcurementCycleStatus {
+  DRAFT
+  OPEN
+  CLOSED
+  PROCESSING
+  DELIVERED
+  ARCHIVED
+}
+
+enum StockStatus {
+  AVAILABLE
+  LOW_STOCK
+  OUT_OF_STOCK
+  BACK_ORDER
+  DISCONTINUED
+  UNKNOWN
+}
+
+enum InvoiceStatus {
+  DRAFT
+  GENERATED
+  SENT
+  PAID
+  CANCELLED
+}
+
+enum PaymentStatus {
+  PENDING
+  PARTIALLY_PAID
+  PAID
+  OVERDUE
+  NOT_PAID
+  FAILED
+  REFUNDED
+}
+
+enum FundingApplicationStatus {
+  DRAFT
+  IN_PROGRESS
+  READY
+  SUBMITTED
+  UNDER_REVIEW
+  CLARIFICATION_REQUESTED
+  APPROVED
+  REJECTED
+  WITHDRAWN
+}
+
+enum FundingChecklistStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  COMPLETE
+  WAIVED
+}
+
+enum SupplierUserRole {
+  OWNER
+  ADMINISTRATOR
+  SALES
+  FINANCE
+  LOGISTICS
+  CATALOGUE_MANAGER
+  READ_ONLY
+}
+
+enum SupplierOwnershipStatus {
+  ACTIVE
+  INVITED
+  SUSPENDED
+  REMOVED
+}
+
+enum SupplierDocumentStatus {
+  MISSING
+  UPLOADED
+  PENDING_REVIEW
+  VERIFIED
+  REJECTED
+  EXPIRED
+  EXPIRING_SOON
+}
+
+enum SupplierQuotationStatus {
+  DRAFT
+  REQUESTED
+  SUBMITTED
+  UNDER_REVIEW
+  APPROVED
+  REJECTED
+  EXPIRED
+  WITHDRAWN
+}
+
+enum PartnerUserRole {
+  OWNER
+  ADMINISTRATOR
+  PROGRAMME_MANAGER
+  FINANCE
+  MONITORING_EVALUATION
+  VIEWER
+}
+
+enum PartnerOwnershipStatus {
+  ACTIVE
+  INVITED
+  SUSPENDED
+  REMOVED
+}
+
+enum MessageParticipantType {
+  USER
+  CENTRE
+  SUPPLIER
+  DONOR
+  FUNDING_ORGANISATION
+  ECDLINK
+}
+
+enum IntelligenceQueryStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum IntelligenceInsightSeverity {
+  INFORMATION
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum IntelligenceInsightStatus {
+  NEW
+  ACKNOWLEDGED
+  IN_PROGRESS
+  RESOLVED
+  DISMISSED
+  EXPIRED
+}
+
+enum IntelligenceRecommendationStatus {
+  SUGGESTED
+  ACCEPTED
+  IN_PROGRESS
+  COMPLETED
+  DISMISSED
+}
+
+enum IntelligenceDraftStatus {
+  DRAFT
+  REVIEWED
+  ACCEPTED
+  REJECTED
+  CONVERTED
+}
+
+model User {
+  id                          String                       @id @default(cuid())
+  clerkUserId                 String                       @unique
+  email                       String?
+  firstName                   String?
+  lastName                    String?
+  phone                       String?
+  role                        UserRole
+  roleId                      String?
+  status                      UserStatus                   @default(ACTIVE)
+  lastLoginAt                 DateTime?
+  createdAt                   DateTime                     @default(now())
+  updatedAt                   DateTime                     @updatedAt
+  roleRecord                  Role?                        @relation(fields: [roleId], references: [id])
+  centreUsers                 CentreUser[]
+  supplierUsers               SupplierUser[]
+  donorUsers                  DonorUser[]
+  fundingUsers                FundingOrganisationUser[]
+  sessions                    Session[]
+  sentInvitations             Invitation[]                 @relation("InvitationSender")
+  acceptedInvitations         Invitation[]                 @relation("InvitationAcceptedUser")
+  uploadedFiles               FileAsset[]                  @relation("UploadedFiles")
+  submittedDocuments          ComplianceDocument[]         @relation("SubmittedComplianceDocuments")
+  verifiedDocuments           ComplianceDocument[]         @relation("VerifiedDocuments")
+  rejectedDocuments           ComplianceDocument[]         @relation("RejectedComplianceDocuments")
+  auditLogs                   AuditLog[]
+  sentMessages                Message[]                    @relation("SentMessages")
+  membershipPayments          MembershipPayment[]
+  intelligenceQueries         IntelligenceQuery[]
+  intelligenceRecommendations IntelligenceRecommendation[]
+  intelligenceProposalDrafts  IntelligenceProposalDraft[]
+  intelligenceBudgetDrafts    IntelligenceBudgetDraft[]
+
+  @@index([email])
+  @@index([role, status])
+}
+
+model Role {
+  id                  String              @id @default(cuid())
+  key                 UserRole            @unique
+  name                String
+  description         String?
+  system              Boolean             @default(true)
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  users               User[]
+  permissions         RolePermission[]
+  intelligenceQueries IntelligenceQuery[]
+}
+
+model Permission {
+  id          String           @id @default(cuid())
+  key         String           @unique
+  name        String
+  description String?
+  createdAt   DateTime         @default(now())
+  roles       RolePermission[]
+}
+
+model RolePermission {
+  id           String     @id @default(cuid())
+  roleId       String
+  permissionId String
+  createdAt    DateTime   @default(now())
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionId])
+}
+
+model EcdCentre {
+  id                          String                       @id @default(cuid())
+  centreName                  String
+  slug                        String                       @unique
+  registrationStatus          RegistrationStatus           @default(IN_PROGRESS)
+  npoNumber                   String?
+  dbeRegistrationStatus       String?
+  partialCareStatus           String?
+  physicalAddress             String?
+  suburb                      String?
+  area                        String?
+  region                      String?
+  province                    String?
+  postalCode                  String?
+  latitude                    Decimal?                     @db.Decimal(10, 7)
+  longitude                   Decimal?                     @db.Decimal(10, 7)
+  contactPerson               String?
+  phone                       String?
+  email                       String?
+  principalName               String?
+  numberOfChildren            Int?
+  numberOfStaff               Int?
+  membershipStatus            MembershipStatus             @default(PENDING)
+  procurementStatus           ParticipationStatus          @default(PENDING)
+  complianceStatus            ComplianceStatus             @default(ATTENTION)
+  fundingReadinessStatus      ReadinessStatus              @default(IN_PROGRESS)
+  notes                       String?
+  createdAt                   DateTime                     @default(now())
+  updatedAt                   DateTime                     @updatedAt
+  archivedAt                  DateTime?
+  users                       CentreUser[]
+  photos                      CentrePhoto[]
+  centreNotes                 CentreNote[]
+  activities                  CentreActivity[]
+  memberships                 Membership[]
+  complianceDocuments         ComplianceDocument[]
+  fundingProfiles             FundingProfile[]
+  procurementOrders           ProcurementOrder[]
+  impactProjects              ImpactProject[]
+  partnershipRequests         PartnershipRequest[]
+  sponsorshipCommitments      SponsorshipCommitment[]
+  impactReports               ImpactReport[]
+  partnerBookmarks            PartnerBookmark[]
+  partnerEngagements          PartnerEngagement[]
+  messageThreads              MessageThread[]
+  notifications               Notification[]
+  intelligenceInsights        IntelligenceInsight[]
+  intelligenceRecommendations IntelligenceRecommendation[]
+  intelligenceProposalDrafts  IntelligenceProposalDraft[]
+  intelligenceBudgetDrafts    IntelligenceBudgetDraft[]
+  invitations                 Invitation[]
+
+  @@index([slug])
+  @@index([area, region, province])
+}
+
+model CentreUser {
+  id          String          @id @default(cuid())
+  centreId    String
+  userId      String
+  role        CentreUserRole  @default(READ_ONLY)
+  title       String?
+  status      OwnershipStatus @default(ACTIVE)
+  permissions String[]        @default([])
+  isPrimary   Boolean         @default(false)
+  joinedAt    DateTime        @default(now())
+  removedAt   DateTime?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  centre      EcdCentre       @relation(fields: [centreId], references: [id], onDelete: Cascade)
+  user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([centreId, userId])
+  @@index([userId, status])
+  @@index([centreId, role])
+}
+
+model CentrePhoto {
+  id         String     @id @default(cuid())
+  centreId   String
+  title      String
+  tone       String?
+  fileId     String?
+  uploadedAt DateTime   @default(now())
+  centre     EcdCentre  @relation(fields: [centreId], references: [id], onDelete: Cascade)
+  file       FileAsset? @relation(fields: [fileId], references: [id])
+}
+
+model CentreNote {
+  id        String    @id @default(cuid())
+  centreId  String
+  author    String
+  body      String
+  createdAt DateTime  @default(now())
+  centre    EcdCentre @relation(fields: [centreId], references: [id], onDelete: Cascade)
+}
+
+model CentreActivity {
+  id          String       @id @default(cuid())
+  centreId    String
+  title       String
+  description String
+  type        ActivityType
+  createdAt   DateTime     @default(now())
+  centre      EcdCentre    @relation(fields: [centreId], references: [id], onDelete: Cascade)
+}
+
+model Membership {
+  id                  String              @id @default(cuid())
+  centreId            String
+  membershipYear      Int
+  annualFee           Decimal             @db.Decimal(12, 2)
+  startDate           DateTime
+  expiryDate          DateTime
+  renewalReminderDate DateTime
+  renewalDate         DateTime?
+  status              MembershipStatus    @default(PENDING)
+  paymentStatus       PaymentStatus       @default(NOT_PAID)
+  amountDue           Decimal             @db.Decimal(12, 2)
+  amountPaid          Decimal             @default(0) @db.Decimal(12, 2)
+  balance             Decimal             @db.Decimal(12, 2)
+  notes               String?
+  cancelledAt         DateTime?
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  centre              EcdCentre           @relation(fields: [centreId], references: [id], onDelete: Cascade)
+  invoices            MembershipInvoice[]
+  payments            MembershipPayment[]
+  receipts            MembershipReceipt[]
+
+  @@unique([centreId, membershipYear])
+  @@index([membershipYear, status, paymentStatus])
+}
+
+model MembershipInvoice {
+  id           String        @id @default(cuid())
+  membershipId String
+  invoiceNo    String        @unique
+  amount       Decimal       @db.Decimal(12, 2)
+  status       InvoiceStatus @default(GENERATED)
+  issuedAt     DateTime      @default(now())
+  dueAt        DateTime?
+  fileId       String?
+  membership   Membership    @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+  file         FileAsset?    @relation(fields: [fileId], references: [id])
+}
+
+model MembershipPayment {
+  id               String              @id @default(cuid())
+  membershipId     String
+  receivedByUserId String?
+  amount           Decimal             @db.Decimal(12, 2)
+  status           PaymentStatus       @default(PENDING)
+  paymentMethod    String?
+  receiptReference String?
+  paidAt           DateTime?
+  createdAt        DateTime            @default(now())
+  membership       Membership          @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+  receivedBy       User?               @relation(fields: [receivedByUserId], references: [id])
+  receipts         MembershipReceipt[]
+}
+
+model MembershipReceipt {
+  id           String             @id @default(cuid())
+  membershipId String
+  paymentId    String?
+  receiptNo    String             @unique
+  amount       Decimal            @db.Decimal(12, 2)
+  issuedAt     DateTime           @default(now())
+  fileId       String?
+  membership   Membership         @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+  payment      MembershipPayment? @relation(fields: [paymentId], references: [id])
+  file         FileAsset?         @relation(fields: [fileId], references: [id])
+}
+
+model ComplianceRequirement {
+  id                 String               @id @default(cuid())
+  type               String               @unique
+  name               String?
+  code               String?              @unique
+  description        String?
+  category           String?
+  required           Boolean              @default(true)
+  requiresExpiryDate Boolean              @default(false)
+  acceptedFileTypes  String[]             @default([])
+  maxFileSize        Int?
+  active             Boolean              @default(true)
+  displayOrder       Int                  @default(0)
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+  documents          ComplianceDocument[]
+}
+
+model ComplianceDocument {
+  id                    String                 @id @default(cuid())
+  centreId              String
+  requirementId         String?
+  fileId                String?
+  documentNumber        String?
+  documentType          String
+  issueDate             DateTime?
+  expiryDate            DateTime?
+  status                DocumentStatus         @default(MISSING)
+  verificationStatus    VerificationStatus     @default(PENDING_REVIEW)
+  submittedByUserId     String?
+  submittedAt           DateTime?
+  verifiedByUserId      String?
+  verifiedAt            DateTime?
+  rejectedByUserId      String?
+  rejectedAt            DateTime?
+  rejectionReason       String?
+  adminNotes            String?
+  reminderDate          DateTime?
+  replacementDocumentId String?
+  archivedAt            DateTime?
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+  centre                EcdCentre              @relation(fields: [centreId], references: [id], onDelete: Cascade)
+  requirement           ComplianceRequirement? @relation(fields: [requirementId], references: [id])
+  file                  FileAsset?             @relation(fields: [fileId], references: [id])
+  submittedBy           User?                  @relation("SubmittedComplianceDocuments", fields: [submittedByUserId], references: [id])
+  verifiedBy            User?                  @relation("VerifiedDocuments", fields: [verifiedByUserId], references: [id])
+  rejectedBy            User?                  @relation("RejectedComplianceDocuments", fields: [rejectedByUserId], references: [id])
+  replacementDocument   ComplianceDocument?    @relation("ComplianceDocumentReplacement", fields: [replacementDocumentId], references: [id])
+  replacedDocuments     ComplianceDocument[]   @relation("ComplianceDocumentReplacement")
+
+  @@index([centreId, status, verificationStatus])
+  @@index([requirementId, expiryDate])
+}
+
+model FundingProfile {
+  id                   String                      @id @default(cuid())
+  centreId             String
+  readinessScore       Int                         @default(0)
+  status               FundingApplicationStatus    @default(DRAFT)
+  readinessStatus      ReadinessStatus             @default(IN_PROGRESS)
+  proposalReady        Boolean                     @default(false)
+  budgetReady          Boolean                     @default(false)
+  beneficiaryListReady Boolean                     @default(false)
+  supportingDocsReady  Boolean                     @default(false)
+  missingRequirements  String[]                    @default([])
+  recommendedActions   String[]                    @default([])
+  adminNotes           String?
+  lastAssessmentDate   DateTime?
+  nextReviewDate       DateTime?
+  createdAt            DateTime                    @default(now())
+  updatedAt            DateTime                    @updatedAt
+  centre               EcdCentre                   @relation(fields: [centreId], references: [id], onDelete: Cascade)
+  projects             FundingProject[]
+  checklistItems       FundingChecklistItem[]
+  supportingDocuments  FundingSupportingDocument[]
+  reminders            FundingReminder[]
+
+  @@unique([centreId])
+  @@index([status, readinessScore])
+}
+
+model FundingProject {
+  id                       String                   @id @default(cuid())
+  fundingProfileId         String
+  title                    String
+  slug                     String?                  @unique
+  opportunityType          String?
+  funderType               String?
+  summary                  String?
+  objective                String?
+  problemStatement         String?
+  expectedOutcomes         String[]                 @default([])
+  requiredItems            String[]                 @default([])
+  requestedAmount          Decimal                  @db.Decimal(12, 2)
+  amountSecured            Decimal                  @default(0) @db.Decimal(12, 2)
+  fundingGap               Decimal                  @default(0) @db.Decimal(12, 2)
+  beneficiaries            Int?
+  startDate                DateTime?
+  endDate                  DateTime?
+  status                   FundingApplicationStatus @default(DRAFT)
+  visibility               String                   @default("Internal")
+  approvedForPartnerPortal Boolean                  @default(false)
+  approvedAt               DateTime?
+  archivedAt               DateTime?
+  createdByUserId          String?
+  approvedByUserId         String?
+  createdAt                DateTime                 @default(now())
+  updatedAt                DateTime                 @updatedAt
+  profile                  FundingProfile           @relation(fields: [fundingProfileId], references: [id], onDelete: Cascade)
+  applications             FundingApplication[]
+  beneficiaryLists         BeneficiaryList[]
+  budgets                  Budget[]
+  proposals                FundingProposal[]
+  impactProjects           ImpactProject[]
+
+  @@index([status, opportunityType])
+}
+
+model FundingApplication {
+  id                         String                   @id @default(cuid())
+  projectId                  String
+  fundingCallId              String?
+  fundingOrganisationId      String?
+  applicationNumber          String                   @unique
+  requestedAmount            Decimal                  @default(0) @db.Decimal(12, 2)
+  approvedAmount             Decimal?                 @db.Decimal(12, 2)
+  readinessScoreAtSubmission Int?
+  submissionMethod           String?
+  externalReference          String?
+  status                     FundingApplicationStatus @default(DRAFT)
+  submittedAt                DateTime?
+  decidedAt                  DateTime?
+  decisionDate               DateTime?
+  rejectionReason            String?
+  adminNotes                 String?
+  notes                      String?
+  createdByUserId            String?
+  reviewedByUserId           String?
+  createdAt                  DateTime                 @default(now())
+  updatedAt                  DateTime                 @updatedAt
+  project                    FundingProject           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  fundingCall                FundingCall?             @relation(fields: [fundingCallId], references: [id])
+  fundingOrganisation        FundingOrganisation?     @relation(fields: [fundingOrganisationId], references: [id])
+  assessments                FundingAssessment[]
+  reminders                  FundingReminder[]
+
+  @@index([status, submittedAt])
+  @@index([fundingCallId])
+}
+
+model BeneficiaryList {
+  id               String         @id @default(cuid())
+  projectId        String
+  name             String
+  count            Int
+  beneficiaryType  String?
+  reportingPeriod  String?
+  boysCount        Int?
+  girlsCount       Int?
+  ageGroupSummary  Json?
+  disabilityCount  Int?
+  notes            String?
+  fileId           String?
+  createdByUserId  String?
+  verifiedByUserId String?
+  verifiedAt       DateTime?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  project          FundingProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  file             FileAsset?     @relation(fields: [fileId], references: [id])
+}
+
+model Budget {
+  id               String         @id @default(cuid())
+  projectId        String
+  title            String
+  currency         String         @default("ZAR")
+  total            Decimal        @db.Decimal(12, 2)
+  requestedAmount  Decimal        @default(0) @db.Decimal(12, 2)
+  coFundingAmount  Decimal        @default(0) @db.Decimal(12, 2)
+  version          Int            @default(1)
+  status           String         @default("Draft")
+  createdByUserId  String?
+  reviewedByUserId String?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  project          FundingProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  items            BudgetItem[]
+}
+
+model BudgetItem {
+  id                   String     @id @default(cuid())
+  budgetId             String
+  label                String
+  category             String?
+  description          String?
+  quantity             Int        @default(1)
+  unit                 String?
+  unitCost             Decimal    @db.Decimal(12, 2)
+  lineTotal            Decimal    @db.Decimal(12, 2)
+  frequency            String?
+  justification        String?
+  supplierId           String?
+  quotationFileAssetId String?
+  displayOrder         Int        @default(0)
+  budget               Budget     @relation(fields: [budgetId], references: [id], onDelete: Cascade)
+  quotationFile        FileAsset? @relation("BudgetItemQuotationFiles", fields: [quotationFileAssetId], references: [id])
+}
+
+model FundingProposal {
+  id               String                   @id @default(cuid())
+  projectId        String
+  title            String
+  executiveSummary String?
+  problemStatement String?
+  projectPlan      String?
+  impactStatement  String?
+  status           FundingApplicationStatus @default(DRAFT)
+  version          Int                      @default(1)
+  generatedByAi    Boolean                  @default(false)
+  createdByUserId  String?
+  reviewedByUserId String?
+  reviewedAt       DateTime?
+  createdAt        DateTime                 @default(now())
+  updatedAt        DateTime                 @updatedAt
+  project          FundingProject           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+model FundingChecklistItem {
+  id               String                 @id @default(cuid())
+  fundingProfileId String
+  category         String
+  label            String
+  status           FundingChecklistStatus @default(NOT_STARTED)
+  note             String?
+  required         Boolean                @default(true)
+  displayOrder     Int                    @default(0)
+  completedAt      DateTime?
+  createdAt        DateTime               @default(now())
+  updatedAt        DateTime               @updatedAt
+  profile          FundingProfile         @relation(fields: [fundingProfileId], references: [id], onDelete: Cascade)
+
+  @@index([fundingProfileId, category])
+}
+
+model FundingSupportingDocument {
+  id               String                 @id @default(cuid())
+  fundingProfileId String
+  label            String
+  documentType     String
+  status           FundingChecklistStatus @default(NOT_STARTED)
+  fileId           String?
+  note             String?
+  required         Boolean                @default(true)
+  uploadedAt       DateTime?
+  verifiedAt       DateTime?
+  createdAt        DateTime               @default(now())
+  updatedAt        DateTime               @updatedAt
+  profile          FundingProfile         @relation(fields: [fundingProfileId], references: [id], onDelete: Cascade)
+  file             FileAsset?             @relation(fields: [fileId], references: [id])
+}
+
+model FundingReminder {
+  id               String              @id @default(cuid())
+  fundingProfileId String?
+  applicationId    String?
+  title            String
+  body             String
+  dueAt            DateTime?
+  status           String              @default("Pending")
+  createdAt        DateTime            @default(now())
+  profile          FundingProfile?     @relation(fields: [fundingProfileId], references: [id], onDelete: Cascade)
+  application      FundingApplication? @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+}
+
+model Supplier {
+  id                          String                       @id @default(cuid())
+  companyName                 String
+  slug                        String                       @unique
+  registrationNumber          String?
+  vatNumber                   String?
+  taxNumber                   String?
+  contactPerson               String?
+  phone                       String?
+  alternativePhone            String?
+  email                       String?
+  website                     String?
+  physicalAddress             String?
+  suburb                      String?
+  city                        String?
+  province                    String?
+  postalCode                  String?
+  areasServed                 String[]
+  deliveryCapability          String?
+  bulkPricingCapability       Boolean                      @default(false)
+  minimumOrderValue           Decimal?                     @db.Decimal(12, 2)
+  standardLeadTimeDays        Int?
+  taxComplianceStatus         String                       @default("Unknown")
+  status                      String                       @default("Pending")
+  onboardingChecklist         Json?
+  onboardingPercentage        Int                          @default(0)
+  approvedAt                  DateTime?
+  approvedByUserId            String?
+  suspendedAt                 DateTime?
+  suspensionReason            String?
+  archivedAt                  DateTime?
+  createdAt                   DateTime                     @default(now())
+  updatedAt                   DateTime                     @updatedAt
+  users                       SupplierUser[]
+  products                    SupplierProduct[]
+  orders                      ProcurementOrder[]
+  supplierOrders              SupplierOrder[]
+  documents                   SupplierDocument[]
+  quotations                  SupplierQuotation[]
+  invoices                    SupplierInvoice[]
+  payments                    SupplierPayment[]
+  deliveries                  Delivery[]
+  performanceRecords          SupplierPerformance[]
+  notes                       SupplierNote[]
+  impactProjectNeeds          ImpactProjectNeed[]
+  intelligenceInsights        IntelligenceInsight[]
+  intelligenceRecommendations IntelligenceRecommendation[]
+
+  @@index([status, taxComplianceStatus])
+  @@index([companyName])
+}
+
+model SupplierUser {
+  id          String                  @id @default(cuid())
+  supplierId  String
+  userId      String
+  role        SupplierUserRole        @default(READ_ONLY)
+  status      SupplierOwnershipStatus @default(ACTIVE)
+  permissions String[]                @default([])
+  isPrimary   Boolean                 @default(false)
+  joinedAt    DateTime                @default(now())
+  removedAt   DateTime?
+  supplier    Supplier                @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  user        User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([supplierId, userId])
+  @@index([userId, status])
+}
+
+model ProductCategory {
+  id       String    @id @default(cuid())
+  name     String    @unique
+  slug     String    @unique
+  products Product[]
+}
+
+model Product {
+  id                     String                  @id @default(cuid())
+  categoryId             String
+  sku                    String                  @unique
+  name                   String
+  description            String?
+  brand                  String?
+  packSize               String?
+  unit                   String?
+  currentPrice           Decimal                 @db.Decimal(12, 2)
+  vatApplicable          Boolean                 @default(false)
+  stockStatus            StockStatus             @default(AVAILABLE)
+  active                 Boolean                 @default(true)
+  createdAt              DateTime                @default(now())
+  updatedAt              DateTime                @updatedAt
+  category               ProductCategory         @relation(fields: [categoryId], references: [id])
+  supplierProducts       SupplierProduct[]
+  orderItems             ProcurementOrderItem[]
+  supplierQuotationItems SupplierQuotationItem[]
+  supplierOrderItems     SupplierOrderItem[]
+
+  @@index([categoryId, active])
+  @@index([name])
+}
+
+model SupplierProduct {
+  id                   String                 @id @default(cuid())
+  supplierId           String
+  productId            String
+  supplierProductCode  String?
+  supplierProductName  String?
+  barcodePlaceholder   String?
+  unitPrice            Decimal                @db.Decimal(12, 2)
+  vatInclusive         Boolean                @default(true)
+  stockStatus          StockStatus            @default(AVAILABLE)
+  availability         String?
+  availableQuantity    Int?
+  minimumOrderQuantity Int?
+  maximumOrderQuantity Int?
+  leadTimeDays         Int?
+  deliveryAvailable    Boolean                @default(true)
+  active               Boolean                @default(true)
+  priceEffectiveFrom   DateTime?
+  priceEffectiveTo     DateTime?
+  lastPriceUpdateAt    DateTime               @default(now())
+  priceUpdatedAt       DateTime               @default(now())
+  supplier             Supplier               @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  product              Product                @relation(fields: [productId], references: [id], onDelete: Cascade)
+  priceHistory         SupplierPriceHistory[]
+
+  @@unique([supplierId, productId])
+  @@index([supplierId, active])
+  @@index([productId, stockStatus])
+}
+
+model SupplierDocument {
+  id                    String                 @id @default(cuid())
+  supplierId            String
+  fileId                String?
+  documentType          String
+  documentNumber        String?
+  issueDate             DateTime?
+  expiryDate            DateTime?
+  status                SupplierDocumentStatus @default(MISSING)
+  verificationStatus    VerificationStatus     @default(PENDING_REVIEW)
+  submittedByUserId     String?
+  submittedAt           DateTime?
+  verifiedByUserId      String?
+  verifiedAt            DateTime?
+  rejectedByUserId      String?
+  rejectedAt            DateTime?
+  rejectionReason       String?
+  adminNotes            String?
+  replacementDocumentId String?
+  archivedAt            DateTime?
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+  supplier              Supplier               @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  file                  FileAsset?             @relation(fields: [fileId], references: [id])
+  replacementDocument   SupplierDocument?      @relation("SupplierDocumentReplacement", fields: [replacementDocumentId], references: [id])
+  replacedDocuments     SupplierDocument[]     @relation("SupplierDocumentReplacement")
+
+  @@index([supplierId, status, verificationStatus])
+}
+
+model SupplierPriceHistory {
+  id                String          @id @default(cuid())
+  supplierProductId String
+  oldPrice          Decimal         @db.Decimal(12, 2)
+  newPrice          Decimal         @db.Decimal(12, 2)
+  effectiveDate     DateTime
+  changedByUserId   String?
+  reason            String?
+  createdAt         DateTime        @default(now())
+  supplierProduct   SupplierProduct @relation(fields: [supplierProductId], references: [id], onDelete: Cascade)
+}
+
+model SupplierQuotation {
+  id                 String                  @id @default(cuid())
+  quotationNumber    String                  @unique
+  supplierId         String
+  procurementCycleId String?
+  requestedByUserId  String?
+  submittedByUserId  String?
+  status             SupplierQuotationStatus @default(DRAFT)
+  validFrom          DateTime?
+  validUntil         DateTime?
+  subtotal           Decimal                 @default(0) @db.Decimal(12, 2)
+  vatAmount          Decimal                 @default(0) @db.Decimal(12, 2)
+  deliveryFee        Decimal                 @default(0) @db.Decimal(12, 2)
+  totalAmount        Decimal                 @default(0) @db.Decimal(12, 2)
+  notes              String?
+  terms              String?
+  submittedAt        DateTime?
+  approvedAt         DateTime?
+  approvedByUserId   String?
+  rejectedAt         DateTime?
+  rejectionReason    String?
+  createdAt          DateTime                @default(now())
+  updatedAt          DateTime                @updatedAt
+  supplier           Supplier                @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  cycle              ProcurementCycle?       @relation(fields: [procurementCycleId], references: [id])
+  items              SupplierQuotationItem[]
+
+  @@index([supplierId, status])
+}
+
+model SupplierQuotationItem {
+  id                  String            @id @default(cuid())
+  quotationId         String
+  productId           String?
+  productNameSnapshot String
+  packSizeSnapshot    String?
+  quantity            Int
+  unitPrice           Decimal           @db.Decimal(12, 2)
+  lineTotal           Decimal           @db.Decimal(12, 2)
+  availability        String?
+  leadTimeDays        Int?
+  notes               String?
+  quotation           SupplierQuotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  product             Product?          @relation(fields: [productId], references: [id])
+}
+
+model SupplierOrder {
+  id                 String              @id @default(cuid())
+  supplierId         String
+  procurementCycleId String?
+  orderReference     String              @unique
+  status             String              @default("Awaiting Confirmation")
+  totalValue         Decimal             @default(0) @db.Decimal(12, 2)
+  confirmedAt        DateTime?
+  packedAt           DateTime?
+  dispatchedAt       DateTime?
+  deliveredAt        DateTime?
+  packingNotes       String?
+  deliverySchedule   DateTime?
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  supplier           Supplier            @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  cycle              ProcurementCycle?   @relation(fields: [procurementCycleId], references: [id])
+  items              SupplierOrderItem[]
+  invoices           SupplierInvoice[]
+  deliveries         Delivery[]
+
+  @@index([supplierId, status])
+}
+
+model SupplierOrderItem {
+  id                  String        @id @default(cuid())
+  supplierOrderId     String
+  productId           String?
+  productNameSnapshot String
+  packSizeSnapshot    String?
+  unitPriceSnapshot   Decimal       @db.Decimal(12, 2)
+  totalQuantity       Int
+  lineTotal           Decimal       @db.Decimal(12, 2)
+  centreAllocations   Json
+  packingInstructions Json?
+  supplierOrder       SupplierOrder @relation(fields: [supplierOrderId], references: [id], onDelete: Cascade)
+  product             Product?      @relation(fields: [productId], references: [id])
+}
+
+model SupplierInvoice {
+  id                       String            @id @default(cuid())
+  invoiceNumber            String            @unique
+  supplierId               String
+  procurementCycleId       String?
+  supplierOrderId          String?
+  invoiceDate              DateTime
+  dueDate                  DateTime?
+  subtotal                 Decimal           @db.Decimal(12, 2)
+  vatAmount                Decimal           @default(0) @db.Decimal(12, 2)
+  deliveryFee              Decimal           @default(0) @db.Decimal(12, 2)
+  totalAmount              Decimal           @db.Decimal(12, 2)
+  amountPaid               Decimal           @default(0) @db.Decimal(12, 2)
+  outstandingAmount        Decimal           @db.Decimal(12, 2)
+  paymentStatus            String            @default("Not Paid")
+  externalInvoiceReference String?
+  fileAssetId              String?
+  notes                    String?
+  createdAt                DateTime          @default(now())
+  updatedAt                DateTime          @updatedAt
+  supplier                 Supplier          @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  cycle                    ProcurementCycle? @relation(fields: [procurementCycleId], references: [id])
+  supplierOrder            SupplierOrder?    @relation(fields: [supplierOrderId], references: [id])
+  file                     FileAsset?        @relation(fields: [fileAssetId], references: [id])
+  payments                 SupplierPayment[]
+
+  @@index([supplierId, paymentStatus])
+}
+
+model SupplierPayment {
+  id                        String          @id @default(cuid())
+  supplierInvoiceId         String
+  supplierId                String
+  amount                    Decimal         @db.Decimal(12, 2)
+  paymentDate               DateTime
+  paymentMethod             String?
+  paymentReference          String?
+  recordedByUserId          String?
+  proofOfPaymentFileAssetId String?
+  notes                     String?
+  createdAt                 DateTime        @default(now())
+  supplierInvoice           SupplierInvoice @relation(fields: [supplierInvoiceId], references: [id], onDelete: Cascade)
+  supplier                  Supplier        @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  proofOfPaymentFile        FileAsset?      @relation("SupplierPaymentProofFiles", fields: [proofOfPaymentFileAssetId], references: [id])
+}
+
+model SupplierPerformance {
+  id                        String   @id @default(cuid())
+  supplierId                String
+  period                    String
+  orderConfirmationRate     Int      @default(0)
+  quotationResponseHours    Int      @default(0)
+  orderFulfilmentRate       Int      @default(0)
+  onTimeDeliveryRate        Int      @default(0)
+  productAvailabilityRate   Int      @default(0)
+  priceCompetitivenessScore Int      @default(0)
+  invoiceAccuracyRate       Int      @default(0)
+  disputeRate               Int      @default(0)
+  averagePerformanceScore   Int      @default(0)
+  totalMonthlyOrderValue    Decimal  @default(0) @db.Decimal(12, 2)
+  completedOrders           Int      @default(0)
+  performanceBand           String   @default("Needs Improvement")
+  calculatedAt              DateTime @default(now())
+  supplier                  Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+
+  @@unique([supplierId, period])
+}
+
+model SupplierNote {
+  id           String   @id @default(cuid())
+  supplierId   String
+  authorUserId String?
+  body         String
+  internal     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  supplier     Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+}
+
+model ProcurementCycle {
+  id                  String                 @id @default(cuid())
+  month               String
+  year                Int                    @default(2026)
+  opensAt             DateTime
+  closesAt            DateTime
+  deliveryWindowStart DateTime?
+  deliveryWindowEnd   DateTime?
+  status              ProcurementCycleStatus @default(DRAFT)
+  createdAt           DateTime               @default(now())
+  updatedAt           DateTime               @updatedAt
+  orders              ProcurementOrder[]
+  supplierOrders      SupplierOrder[]
+  supplierQuotations  SupplierQuotation[]
+  supplierInvoices    SupplierInvoice[]
+  deliveries          Delivery[]
+
+  @@index([year, month])
+  @@index([status])
+}
+
+model ProcurementOrder {
+  id              String                 @id @default(cuid())
+  orderNumber     String                 @unique
+  centreId        String
+  cycleId         String
+  supplierId      String?
+  selectedBudget  Decimal                @db.Decimal(12, 2)
+  currentSpend    Decimal                @default(0) @db.Decimal(12, 2)
+  remainingBudget Decimal                @default(0) @db.Decimal(12, 2)
+  percentageUsed  Int                    @default(0)
+  subtotal        Decimal                @db.Decimal(12, 2)
+  total           Decimal                @db.Decimal(12, 2)
+  status          OrderStatus            @default(SUBMITTED)
+  approvalNotes   String?
+  rejectionNotes  String?
+  budgetOverride  Boolean                @default(false)
+  approvedAt      DateTime?
+  rejectedAt      DateTime?
+  cancelledAt     DateTime?
+  updatedAt       DateTime               @updatedAt
+  submittedAt     DateTime               @default(now())
+  centre          EcdCentre              @relation(fields: [centreId], references: [id])
+  cycle           ProcurementCycle       @relation(fields: [cycleId], references: [id])
+  supplier        Supplier?              @relation(fields: [supplierId], references: [id])
+  items           ProcurementOrderItem[]
+  invoices        Invoice[]
+  deliveries      Delivery[]
+
+  @@unique([centreId, cycleId])
+  @@index([status, submittedAt])
+}
+
+model ProcurementOrderItem {
+  id                   String           @id @default(cuid())
+  orderId              String
+  productId            String?
+  unitPrice            Decimal          @db.Decimal(12, 2)
+  quantity             Int
+  lineTotal            Decimal          @db.Decimal(12, 2)
+  productNameSnapshot  String
+  packSizeSnapshot     String?
+  brandSnapshot        String?
+  supplierNameSnapshot String?
+  order                ProcurementOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product              Product?         @relation(fields: [productId], references: [id])
+}
+
+model Invoice {
+  id        String            @id @default(cuid())
+  invoiceNo String            @unique
+  orderId   String?
+  amount    Decimal           @db.Decimal(12, 2)
+  status    InvoiceStatus     @default(GENERATED)
+  issuedAt  DateTime          @default(now())
+  dueAt     DateTime?
+  fileId    String?
+  order     ProcurementOrder? @relation(fields: [orderId], references: [id])
+  file      FileAsset?        @relation(fields: [fileId], references: [id])
+}
+
+model Delivery {
+  id                  String            @id @default(cuid())
+  orderId             String
+  supplierId          String?
+  procurementCycleId  String?
+  supplierOrderId     String?
+  status              DeliveryStatus    @default(PENDING)
+  notes               String?
+  deliveryNote        String?
+  driverPlaceholder   String?
+  vehiclePlaceholder  String?
+  driverName          String?
+  driverPhone         String?
+  vehicleRegistration String?
+  deliveryNoteNumber  String?
+  deliveryNotes       String?
+  receivedByName      String?
+  receivedByUserId    String?
+  failureReason       String?
+  scheduledAt         DateTime?
+  scheduledDate       DateTime?
+  dispatchedAt        DateTime?
+  deliveredAt         DateTime?
+  updatedAt           DateTime          @updatedAt
+  order               ProcurementOrder  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  supplier            Supplier?         @relation(fields: [supplierId], references: [id])
+  procurementCycle    ProcurementCycle? @relation(fields: [procurementCycleId], references: [id])
+  supplierOrder       SupplierOrder?    @relation(fields: [supplierOrderId], references: [id])
+  items               DeliveryItem[]
+  proof               ProofOfDelivery?
+}
+
+model DeliveryItem {
+  id         String   @id @default(cuid())
+  deliveryId String
+  label      String
+  quantity   Int
+  delivery   Delivery @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+}
+
+model ProofOfDelivery {
+  id         String     @id @default(cuid())
+  deliveryId String     @unique
+  fileId     String?
+  signedBy   String?
+  notes      String?
+  createdAt  DateTime   @default(now())
+  delivery   Delivery   @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+  file       FileAsset? @relation(fields: [fileId], references: [id])
+}
+
+model DonorOrganisation {
+  id                          String                       @id @default(cuid())
+  name                        String
+  organisationName            String?
+  slug                        String                       @unique
+  type                        String
+  organisationType            String?
+  registrationNumber          String?
+  contactPerson               String?
+  phone                       String?
+  alternativePhone            String?
+  email                       String?
+  website                     String?
+  physicalAddress             String?
+  suburb                      String?
+  city                        String?
+  province                    String?
+  postalCode                  String?
+  focusAreas                  String[]                     @default([])
+  preferredRegions            String[]                     @default([])
+  annualSupportBudget         Decimal?                     @db.Decimal(12, 2)
+  partnershipInterests        String[]                     @default([])
+  status                      String                       @default("Pending")
+  verificationStatus          String                       @default("Unverified")
+  onboardingChecklist         Json?
+  onboardingPercentage        Int                          @default(0)
+  approvedAt                  DateTime?
+  approvedByUserId            String?
+  suspendedAt                 DateTime?
+  suspensionReason            String?
+  archivedAt                  DateTime?
+  createdAt                   DateTime                     @default(now())
+  updatedAt                   DateTime                     @updatedAt
+  users                       DonorUser[]
+  requests                    PartnershipRequest[]
+  commitments                 SponsorshipCommitment[]
+  reports                     ImpactReport[]
+  bookmarks                   PartnerBookmark[]
+  engagements                 PartnerEngagement[]
+  messageThreads              MessageThread[]
+  intelligenceInsights        IntelligenceInsight[]
+  intelligenceRecommendations IntelligenceRecommendation[]
+
+  @@index([status, verificationStatus])
+  @@index([type])
+}
+
+model DonorUser {
+  id                  String                 @id @default(cuid())
+  donorOrganisationId String
+  userId              String
+  role                PartnerUserRole        @default(VIEWER)
+  status              PartnerOwnershipStatus @default(ACTIVE)
+  permissions         String[]               @default([])
+  isPrimary           Boolean                @default(false)
+  joinedAt            DateTime               @default(now())
+  removedAt           DateTime?
+  organisation        DonorOrganisation      @relation(fields: [donorOrganisationId], references: [id], onDelete: Cascade)
+  user                User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([donorOrganisationId, userId])
+  @@index([userId, status])
+}
+
+model PartnershipRequest {
+  id                   String                  @id @default(cuid())
+  donorOrganisationId  String
+  centreId             String?
+  impactProjectId      String?
+  type                 String
+  requestType          String?
+  message              String?
+  proposedSupportType  String?
+  proposedAmount       Decimal?                @db.Decimal(12, 2)
+  proposedItems        Json?
+  preferredMeetingDate DateTime?
+  status               String                  @default("Submitted")
+  requestStatus        String?
+  submittedByUserId    String?
+  assignedToUserId     String?
+  adminNotes           String?
+  partnerNotes         String?
+  centreNotes          String?
+  submittedAt          DateTime?
+  reviewedAt           DateTime?
+  closedAt             DateTime?
+  createdAt            DateTime                @default(now())
+  updatedAt            DateTime                @updatedAt
+  donor                DonorOrganisation       @relation(fields: [donorOrganisationId], references: [id], onDelete: Cascade)
+  centre               EcdCentre?              @relation(fields: [centreId], references: [id])
+  project              ImpactProject?          @relation(fields: [impactProjectId], references: [id])
+  commitments          SponsorshipCommitment[]
+  messageThreads       MessageThread[]
+
+  @@index([donorOrganisationId, status])
+  @@index([centreId])
+}
+
+model ImpactProject {
+  id                       String                  @id @default(cuid())
+  centreId                 String
+  fundingProjectId         String?
+  title                    String
+  slug                     String?                 @unique
+  category                 String
+  projectType              String?
+  summary                  String?
+  fullDescription          String?
+  problemStatement         String?
+  objectives               String[]                @default([])
+  expectedOutcomes         String[]                @default([])
+  supportNeeded            String[]                @default([])
+  requestedAmount          Decimal                 @default(0) @db.Decimal(12, 2)
+  totalBudget              Decimal                 @default(0) @db.Decimal(12, 2)
+  amountCommitted          Decimal                 @default(0) @db.Decimal(12, 2)
+  amountReceived           Decimal                 @default(0) @db.Decimal(12, 2)
+  remainingNeed            Decimal                 @default(0) @db.Decimal(12, 2)
+  numberOfBeneficiaries    Int?
+  startDate                DateTime?
+  endDate                  DateTime?
+  budget                   Decimal                 @db.Decimal(12, 2)
+  progress                 Int                     @default(0)
+  description              String?
+  status                   String                  @default("Active")
+  projectStatus            String?
+  visibility               String                  @default("Partner")
+  featured                 Boolean                 @default(false)
+  approvedForPartnerPortal Boolean                 @default(false)
+  approvedAt               DateTime?
+  approvedByUserId         String?
+  createdByUserId          String?
+  archivedAt               DateTime?
+  createdAt                DateTime                @default(now())
+  updatedAt                DateTime                @updatedAt
+  centre                   EcdCentre               @relation(fields: [centreId], references: [id], onDelete: Cascade)
+  fundingProject           FundingProject?         @relation(fields: [fundingProjectId], references: [id])
+  requests                 PartnershipRequest[]
+  reports                  ImpactReport[]
+  needs                    ImpactProjectNeed[]
+  commitments              SponsorshipCommitment[]
+  updates                  ProjectUpdate[]
+  bookmarks                PartnerBookmark[]
+  engagements              PartnerEngagement[]
+
+  @@index([status, featured])
+  @@index([centreId])
+}
+
+model ImpactReport {
+  id                   String              @id @default(cuid())
+  centreId             String?
+  impactProjectId      String?
+  donorOrganisationId  String?
+  title                String
+  body                 String?
+  reportingPeriodStart DateTime?
+  reportingPeriodEnd   DateTime?
+  reportType           String?
+  summary              String?
+  beneficiariesReached Int?
+  childrenReached      Int?
+  staffSupported       Int?
+  activitiesCompleted  String[]            @default([])
+  outputs              String[]            @default([])
+  outcomes             String[]            @default([])
+  challenges           String?
+  lessonsLearned       String?
+  nextSteps            String?
+  amountAllocated      Decimal?            @db.Decimal(12, 2)
+  amountUsed           Decimal?            @db.Decimal(12, 2)
+  remainingAmount      Decimal?            @db.Decimal(12, 2)
+  status               String              @default("Draft")
+  visibility           String              @default("Private")
+  fileId               String?
+  preparedByUserId     String?
+  reviewedByUserId     String?
+  approvedAt           DateTime?
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+  centre               EcdCentre?          @relation(fields: [centreId], references: [id])
+  project              ImpactProject?      @relation(fields: [impactProjectId], references: [id], onDelete: Cascade)
+  donor                DonorOrganisation?  @relation(fields: [donorOrganisationId], references: [id])
+  file                 FileAsset?          @relation(fields: [fileId], references: [id])
+  bookmarks            PartnerBookmark[]
+  engagements          PartnerEngagement[]
+}
+
+model ImpactProjectNeed {
+  id                 String        @id @default(cuid())
+  projectId          String
+  needType           String
+  itemName           String
+  description        String?
+  quantity           Int           @default(1)
+  unit               String?
+  estimatedUnitCost  Decimal       @default(0) @db.Decimal(12, 2)
+  estimatedTotalCost Decimal       @default(0) @db.Decimal(12, 2)
+  priority           String        @default("Medium")
+  supportType        String        @default("Financial")
+  fulfilledQuantity  Int           @default(0)
+  status             String        @default("Open")
+  supplierId         String?
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+  project            ImpactProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  supplier           Supplier?     @relation(fields: [supplierId], references: [id])
+}
+
+model SponsorshipCommitment {
+  id                     String              @id @default(cuid())
+  partnershipRequestId   String?
+  donorOrganisationId    String
+  centreId               String
+  impactProjectId        String?
+  commitmentType         String
+  committedAmount        Decimal?            @db.Decimal(12, 2)
+  committedItems         Json?
+  committedServices      Json?
+  commitmentDate         DateTime            @default(now())
+  expectedFulfilmentDate DateTime?
+  fulfilledDate          DateTime?
+  commitmentStatus       String              @default("Proposed")
+  referenceNumber        String              @unique
+  notes                  String?
+  createdByUserId        String?
+  approvedByUserId       String?
+  createdAt              DateTime            @default(now())
+  updatedAt              DateTime            @updatedAt
+  request                PartnershipRequest? @relation(fields: [partnershipRequestId], references: [id])
+  donor                  DonorOrganisation   @relation(fields: [donorOrganisationId], references: [id], onDelete: Cascade)
+  centre                 EcdCentre           @relation(fields: [centreId], references: [id])
+  project                ImpactProject?      @relation(fields: [impactProjectId], references: [id])
+
+  @@index([donorOrganisationId, commitmentStatus])
+}
+
+model ProjectUpdate {
+  id                   String        @id @default(cuid())
+  impactProjectId      String
+  title                String
+  updateDate           DateTime
+  summary              String
+  fullUpdate           String?
+  progressPercentage   Int           @default(0)
+  beneficiariesReached Int?
+  amountUsed           Decimal?      @db.Decimal(12, 2)
+  milestoneStatus      String        @default("Planned")
+  visibility           String        @default("Private")
+  createdByUserId      String?
+  approvedByUserId     String?
+  approvedAt           DateTime?
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+  project              ImpactProject @relation(fields: [impactProjectId], references: [id], onDelete: Cascade)
+}
+
+model PartnerBookmark {
+  id                  String            @id @default(cuid())
+  donorOrganisationId String
+  userId              String?
+  centreId            String?
+  impactProjectId     String?
+  impactReportId      String?
+  bookmarkType        String
+  createdAt           DateTime          @default(now())
+  donor               DonorOrganisation @relation(fields: [donorOrganisationId], references: [id], onDelete: Cascade)
+  centre              EcdCentre?        @relation(fields: [centreId], references: [id])
+  project             ImpactProject?    @relation(fields: [impactProjectId], references: [id])
+  report              ImpactReport?     @relation(fields: [impactReportId], references: [id])
+
+  @@unique([donorOrganisationId, centreId, impactProjectId, impactReportId])
+}
+
+model PartnerEngagement {
+  id                  String            @id @default(cuid())
+  donorOrganisationId String
+  userId              String?
+  centreId            String?
+  impactProjectId     String?
+  impactReportId      String?
+  action              String
+  engagementDate      DateTime          @default(now())
+  metadata            Json?
+  donor               DonorOrganisation @relation(fields: [donorOrganisationId], references: [id], onDelete: Cascade)
+  centre              EcdCentre?        @relation(fields: [centreId], references: [id])
+  project             ImpactProject?    @relation(fields: [impactProjectId], references: [id])
+  report              ImpactReport?     @relation(fields: [impactReportId], references: [id])
+
+  @@index([donorOrganisationId, action])
+}
+
+model FundingOrganisation {
+  id                          String                       @id @default(cuid())
+  name                        String
+  slug                        String                       @unique
+  type                        String?
+  status                      String                       @default("Active")
+  users                       FundingOrganisationUser[]
+  calls                       FundingCall[]
+  applications                FundingApplication[]
+  intelligenceInsights        IntelligenceInsight[]
+  intelligenceRecommendations IntelligenceRecommendation[]
+}
+
+model FundingOrganisationUser {
+  id                    String              @id @default(cuid())
+  fundingOrganisationId String
+  userId                String
+  isPrimary             Boolean             @default(false)
+  organisation          FundingOrganisation @relation(fields: [fundingOrganisationId], references: [id], onDelete: Cascade)
+  user                  User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([fundingOrganisationId, userId])
+}
+
+model FundingCall {
+  id                        String               @id @default(cuid())
+  fundingOrganisationId     String
+  referenceNumber           String?              @unique
+  title                     String
+  type                      String?
+  description               String?
+  focusAreas                String[]             @default([])
+  eligibleRegions           String[]             @default([])
+  eligibleOrganisationTypes String[]             @default([])
+  minimumAmount             Decimal?             @db.Decimal(12, 2)
+  maximumAmount             Decimal?             @db.Decimal(12, 2)
+  applicationMethod         String?
+  contactEmail              String?
+  externalUrl               String?
+  requiredDocuments         String[]             @default([])
+  featured                  Boolean              @default(false)
+  opensAt                   DateTime?
+  closesAt                  DateTime?
+  publishedAt               DateTime?
+  archivedAt                DateTime?
+  status                    String               @default("Open")
+  createdAt                 DateTime             @default(now())
+  updatedAt                 DateTime             @updatedAt
+  organisation              FundingOrganisation  @relation(fields: [fundingOrganisationId], references: [id], onDelete: Cascade)
+  assessments               FundingAssessment[]
+  applications              FundingApplication[]
+
+  @@index([type, status])
+}
+
+model FundingAssessment {
+  id                    String              @id @default(cuid())
+  fundingCallId         String
+  fundingApplicationId  String?
+  assessorUserId        String?
+  fundingOrganisationId String?
+  eligibilityScore      Int?
+  complianceScore       Int?
+  projectQualityScore   Int?
+  budgetScore           Int?
+  impactScore           Int?
+  totalScore            Int?
+  score                 Int?
+  status                String              @default("Under Review")
+  recommendation        String?
+  notes                 String?
+  assessedAt            DateTime?
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+  call                  FundingCall         @relation(fields: [fundingCallId], references: [id], onDelete: Cascade)
+  application           FundingApplication? @relation(fields: [fundingApplicationId], references: [id])
+}
+
+model Notification {
+  id        String     @id @default(cuid())
+  userId    String?
+  centreId  String?
+  title     String
+  body      String
+  readAt    DateTime?
+  createdAt DateTime   @default(now())
+  centre    EcdCentre? @relation(fields: [centreId], references: [id])
+}
+
+model MessageThread {
+  id                   String              @id @default(cuid())
+  subject              String
+  threadType           String?
+  donorOrganisationId  String?
+  centreId             String?
+  partnershipRequestId String?
+  createdAt            DateTime            @default(now())
+  messages             Message[]
+  donor                DonorOrganisation?  @relation(fields: [donorOrganisationId], references: [id])
+  centre               EcdCentre?          @relation(fields: [centreId], references: [id])
+  partnershipRequest   PartnershipRequest? @relation(fields: [partnershipRequestId], references: [id])
+
+  @@index([donorOrganisationId, centreId])
+}
+
+model Message {
+  id           String                 @id @default(cuid())
+  threadId     String
+  senderUserId String?
+  senderType   MessageParticipantType
+  body         String
+  createdAt    DateTime               @default(now())
+  thread       MessageThread          @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  sender       User?                  @relation("SentMessages", fields: [senderUserId], references: [id])
+}
+
+model FileAsset {
+  id                         String                      @id @default(cuid())
+  storageProvider            String
+  storageKey                 String
+  originalFilename           String
+  mimeType                   String
+  fileSize                   Int
+  checksum                   String?
+  uploadedByUserId           String?
+  createdAt                  DateTime                    @default(now())
+  uploadedBy                 User?                       @relation("UploadedFiles", fields: [uploadedByUserId], references: [id])
+  centrePhotos               CentrePhoto[]
+  membershipInvoices         MembershipInvoice[]
+  membershipReceipts         MembershipReceipt[]
+  complianceDocuments        ComplianceDocument[]
+  supplierDocuments          SupplierDocument[]
+  beneficiaryLists           BeneficiaryList[]
+  fundingSupportingDocuments FundingSupportingDocument[]
+  budgetItemQuotations       BudgetItem[]                @relation("BudgetItemQuotationFiles")
+  supplierInvoices           SupplierInvoice[]
+  supplierPaymentProofs      SupplierPayment[]           @relation("SupplierPaymentProofFiles")
+  invoices                   Invoice[]
+  proofs                     ProofOfDelivery[]
+  impactReports              ImpactReport[]
+  intelligenceReports        IntelligenceResponse[]
+}
+
+model IntelligenceQuery {
+  id               String                  @id @default(cuid())
+  userId           String
+  roleId           String?
+  organisationType String?
+  organisationId   String?
+  queryText        String
+  queryCategory    String
+  queryIntent      String?
+  status           IntelligenceQueryStatus @default(PENDING)
+  createdAt        DateTime                @default(now())
+  completedAt      DateTime?
+  failedAt         DateTime?
+  errorMessage     String?
+  metadata         Json?
+  responseId       String?
+  user             User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role             Role?                   @relation(fields: [roleId], references: [id])
+  response         IntelligenceResponse?
+
+  @@index([userId, status, createdAt])
+  @@index([queryCategory, status])
+  @@index([organisationType, organisationId])
+}
+
+model IntelligenceResponse {
+  id                  String                        @id @default(cuid())
+  queryId             String                        @unique
+  responseType        String
+  title               String
+  summary             String?
+  answerText          String
+  structuredData      Json?
+  confidenceLevel     Int                           @default(70)
+  dataFreshnessDate   DateTime                      @default(now())
+  generatedAt         DateTime                      @default(now())
+  generatedBy         String                        @default("Rules Engine")
+  requiresHumanReview Boolean                       @default(true)
+  warnings            String[]                      @default([])
+  recommendedActions  Json?
+  reportFileAssetId   String?
+  proposalDraftId     String?
+  budgetDraftId       String?
+  query               IntelligenceQuery             @relation(fields: [queryId], references: [id], onDelete: Cascade)
+  sourceReferences    IntelligenceSourceReference[]
+  reportFileAsset     FileAsset?                    @relation(fields: [reportFileAssetId], references: [id])
+  proposalDraft       IntelligenceProposalDraft?    @relation(fields: [proposalDraftId], references: [id])
+  budgetDraft         IntelligenceBudgetDraft?      @relation(fields: [budgetDraftId], references: [id])
+}
+
+model IntelligenceSourceReference {
+  id           String               @id @default(cuid())
+  responseId   String
+  sourceType   String
+  sourceId     String
+  sourceLabel  String
+  module       String
+  relationship String?
+  createdAt    DateTime             @default(now())
+  response     IntelligenceResponse @relation(fields: [responseId], references: [id], onDelete: Cascade)
+
+  @@index([sourceType, sourceId])
+}
+
+model IntelligenceInsight {
+  id                    String                       @id @default(cuid())
+  insightType           String
+  title                 String
+  summary               String
+  severity              IntelligenceInsightSeverity  @default(INFORMATION)
+  priority              Int                          @default(3)
+  targetRole            UserRole?
+  centreId              String?
+  supplierId            String?
+  donorOrganisationId   String?
+  fundingOrganisationId String?
+  relatedEntityType     String?
+  relatedEntityId       String?
+  status                IntelligenceInsightStatus    @default(NEW)
+  detectedAt            DateTime                     @default(now())
+  acknowledgedAt        DateTime?
+  resolvedAt            DateTime?
+  expiresAt             DateTime?
+  metadata              Json?
+  createdAt             DateTime                     @default(now())
+  updatedAt             DateTime                     @updatedAt
+  centre                EcdCentre?                   @relation(fields: [centreId], references: [id])
+  supplier              Supplier?                    @relation(fields: [supplierId], references: [id])
+  donorOrganisation     DonorOrganisation?           @relation(fields: [donorOrganisationId], references: [id])
+  fundingOrganisation   FundingOrganisation?         @relation(fields: [fundingOrganisationId], references: [id])
+  recommendations       IntelligenceRecommendation[]
+
+  @@index([targetRole, status, severity])
+  @@index([centreId, status])
+  @@index([supplierId, status])
+  @@index([donorOrganisationId, status])
+  @@index([fundingOrganisationId, status])
+}
+
+model IntelligenceRecommendation {
+  id                    String                           @id @default(cuid())
+  insightId             String?
+  userId                String?
+  centreId              String?
+  supplierId            String?
+  donorOrganisationId   String?
+  fundingOrganisationId String?
+  recommendationType    String
+  title                 String
+  description           String
+  rationale             String?
+  priority              Int                              @default(3)
+  actionRoute           String?
+  status                IntelligenceRecommendationStatus @default(SUGGESTED)
+  generatedAt           DateTime                         @default(now())
+  acknowledgedAt        DateTime?
+  completedAt           DateTime?
+  metadata              Json?
+  insight               IntelligenceInsight?             @relation(fields: [insightId], references: [id])
+  user                  User?                            @relation(fields: [userId], references: [id])
+  centre                EcdCentre?                       @relation(fields: [centreId], references: [id])
+  supplier              Supplier?                        @relation(fields: [supplierId], references: [id])
+  donorOrganisation     DonorOrganisation?               @relation(fields: [donorOrganisationId], references: [id])
+  fundingOrganisation   FundingOrganisation?             @relation(fields: [fundingOrganisationId], references: [id])
+
+  @@index([status, priority])
+  @@index([centreId, status])
+}
+
+model IntelligencePromptTemplate {
+  id                 String   @id @default(cuid())
+  role               UserRole
+  category           String
+  title              String
+  promptText         String
+  description        String?
+  active             Boolean  @default(true)
+  displayOrder       Int      @default(0)
+  requiresPermission String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([role, active, displayOrder])
+}
+
+model IntelligenceProposalDraft {
+  id                      String                  @id @default(cuid())
+  centreId                String
+  projectId               String?
+  fundingCallId           String?
+  title                   String
+  executiveSummary        String
+  organisationBackground  String?
+  problemStatement        String?
+  projectDescription      String?
+  objectives              String[]                @default([])
+  expectedOutcomes        String[]                @default([])
+  implementationPlan      String?
+  monitoringAndEvaluation String?
+  sustainability          String?
+  risks                   String?
+  conclusion              String?
+  status                  IntelligenceDraftStatus @default(DRAFT)
+  generatedFromData       Json?
+  requiresHumanReview     Boolean                 @default(true)
+  createdByUserId         String?
+  createdAt               DateTime                @default(now())
+  updatedAt               DateTime                @updatedAt
+  centre                  EcdCentre               @relation(fields: [centreId], references: [id])
+  createdBy               User?                   @relation(fields: [createdByUserId], references: [id])
+  responses               IntelligenceResponse[]
+
+  @@index([centreId, status])
+}
+
+model IntelligenceBudgetDraft {
+  id                  String                        @id @default(cuid())
+  centreId            String
+  projectId           String?
+  title               String
+  currency            String                        @default("ZAR")
+  requestedAmount     Decimal                       @default(0) @db.Decimal(12, 2)
+  estimatedTotal      Decimal                       @default(0) @db.Decimal(12, 2)
+  status              IntelligenceDraftStatus       @default(DRAFT)
+  assumptions         String[]                      @default([])
+  requiresHumanReview Boolean                       @default(true)
+  createdByUserId     String?
+  createdAt           DateTime                      @default(now())
+  updatedAt           DateTime                      @updatedAt
+  centre              EcdCentre                     @relation(fields: [centreId], references: [id])
+  createdBy           User?                         @relation(fields: [createdByUserId], references: [id])
+  items               IntelligenceBudgetDraftItem[]
+  responses           IntelligenceResponse[]
+
+  @@index([centreId, status])
+}
+
+model IntelligenceBudgetDraftItem {
+  id                String                  @id @default(cuid())
+  budgetDraftId     String
+  category          String
+  description       String
+  quantity          Int                     @default(1)
+  unit              String?
+  estimatedUnitCost Decimal                 @default(0) @db.Decimal(12, 2)
+  estimatedTotal    Decimal                 @default(0) @db.Decimal(12, 2)
+  justification     String?
+  sourceType        String?
+  sourceId          String?
+  budgetDraft       IntelligenceBudgetDraft @relation(fields: [budgetDraftId], references: [id], onDelete: Cascade)
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  actorUserId String?
+  action      String
+  entityType  String
+  entityId    String?
+  before      Json?
+  after       Json?
+  metadata    Json?
+  createdAt   DateTime @default(now())
+  actor       User?    @relation(fields: [actorUserId], references: [id])
+
+  @@index([action, entityType])
+  @@index([actorUserId, createdAt])
+}
+
+model Session {
+  id             String    @id @default(cuid())
+  userId         String
+  clerkSessionId String?   @unique
+  provider       String
+  ipAddress      String?
+  userAgent      String?
+  createdAt      DateTime  @default(now())
+  lastSeenAt     DateTime  @default(now())
+  revokedAt      DateTime?
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, lastSeenAt])
+}
+
+model Invitation {
+  id               String           @id @default(cuid())
+  email            String
+  token            String           @unique
+  invitedRole      UserRole
+  centreId         String?
+  centreRole       CentreUserRole?
+  permissions      String[]         @default([])
+  invitedByUserId  String?
+  acceptedByUserId String?
+  status           InvitationStatus @default(PENDING)
+  expiresAt        DateTime
+  acceptedAt       DateTime?
+  revokedAt        DateTime?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  centre           EcdCentre?       @relation(fields: [centreId], references: [id])
+  invitedBy        User?            @relation("InvitationSender", fields: [invitedByUserId], references: [id])
+  acceptedBy       User?            @relation("InvitationAcceptedUser", fields: [acceptedByUserId], references: [id])
+
+  @@index([email, status])
+  @@index([centreId, status])
+}
