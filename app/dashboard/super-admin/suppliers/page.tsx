@@ -1,3 +1,5 @@
+﻿export const dynamic = "force-dynamic";
+
 import { RoleDashboardShell } from "@/components/app-shell/role-dashboard-shell";
 import { PageHeader } from "@/components/design-system";
 import { SuppliersList } from "@/components/supplier/suppliers-list";
@@ -19,3 +21,4 @@ export default async function AdminSuppliersPage() {
     </RoleDashboardShell>
   );
 }
+

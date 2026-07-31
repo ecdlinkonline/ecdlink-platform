@@ -6,6 +6,7 @@ import type { UserRole } from "@/lib/auth/roles";
 
 const roleCopy: Record<UserRole, string> = {
   super_admin: assistantCopy.commandCentre,
+  ecdlink_staff: assistantCopy.commandCentre,
   ecd_centre: assistantCopy.centre,
   supplier: assistantCopy.supplier,
   donor: assistantCopy.donor,
@@ -14,6 +15,7 @@ const roleCopy: Record<UserRole, string> = {
 
 const roleLabels: Record<UserRole, string> = {
   super_admin: "Super Admin",
+  ecdlink_staff: "ECDLink Staff",
   ecd_centre: "ECD Centre",
   supplier: "Supplier",
   donor: "Donor / CSI Partner",

@@ -1,3 +1,5 @@
+﻿export const dynamic = "force-dynamic";
+
 import { notFound } from "next/navigation";
 import { RoleDashboardShell } from "@/components/app-shell/role-dashboard-shell";
 import { CentreMembershipView } from "@/components/membership/centre-membership-view";
@@ -16,3 +18,4 @@ export default async function CentreMembershipPage() {
     </RoleDashboardShell>
   );
 }
+

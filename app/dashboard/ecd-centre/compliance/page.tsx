@@ -1,3 +1,5 @@
+﻿export const dynamic = "force-dynamic";
+
 import { notFound } from "next/navigation";
 import { RoleDashboardShell } from "@/components/app-shell/role-dashboard-shell";
 import { CentreComplianceView } from "@/components/compliance/centre-compliance-view";
@@ -13,3 +15,4 @@ export default async function CentreCompliancePage() {
     </RoleDashboardShell>
   );
 }
+

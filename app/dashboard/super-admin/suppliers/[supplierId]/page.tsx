@@ -1,3 +1,5 @@
+﻿export const dynamic = "force-dynamic";
+
 import { notFound } from "next/navigation";
 import { RoleDashboardShell } from "@/components/app-shell/role-dashboard-shell";
 import { SupplierPortal } from "@/components/supplier/supplier-portal";
@@ -21,3 +23,4 @@ export default async function AdminSupplierProfilePage({ params }: { params: Pro
     </RoleDashboardShell>
   );
 }
+

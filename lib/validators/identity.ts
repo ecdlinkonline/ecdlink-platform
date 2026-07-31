@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const userRoleSchema = z.enum(["SUPER_ADMIN", "ECD_CENTRE", "SUPPLIER", "DONOR", "FUNDING_ORGANISATION", "SYSTEM"]);
+export const userRoleSchema = z.enum(["SUPER_ADMIN", "ECDLINK_STAFF", "ECD_CENTRE", "SUPPLIER", "DONOR", "FUNDING_ORGANISATION", "SYSTEM"]);
 export const userStatusSchema = z.enum(["ACTIVE", "INVITED", "SUSPENDED", "ARCHIVED"]);
 export const centreUserRoleSchema = z.enum(["PRINCIPAL", "OWNER", "ADMINISTRATOR", "PRACTITIONER", "FINANCE", "VOLUNTEER", "READ_ONLY"]);
 

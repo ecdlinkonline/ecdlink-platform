@@ -1,3 +1,5 @@
+﻿export const dynamic = "force-dynamic";
+
 import { notFound } from "next/navigation";
 import { RoleDashboardShell } from "@/components/app-shell/role-dashboard-shell";
 import { PageHeader, StatusBadge } from "@/components/design-system";
@@ -36,3 +38,4 @@ export default async function DonorProjectPage({ params }: { params: Promise<{ p
     </RoleDashboardShell>
   );
 }
+

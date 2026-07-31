@@ -1,3 +1,5 @@
+﻿export const dynamic = "force-dynamic";
+
 import { notFound } from "next/navigation";
 import { CentreEditForm } from "@/components/centres/centre-edit-form";
 import { RoleDashboardShell } from "@/components/app-shell/role-dashboard-shell";
@@ -21,3 +23,4 @@ export default async function EditCentreProfilePage({
     </RoleDashboardShell>
   );
 }
+

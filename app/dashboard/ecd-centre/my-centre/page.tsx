@@ -1,3 +1,5 @@
+﻿export const dynamic = "force-dynamic";
+
 import { CentreProfile } from "@/components/centres/centre-profile";
 import { RoleDashboardShell } from "@/components/app-shell/role-dashboard-shell";
 import { getCurrentUserCentre } from "@/lib/centres/api";
@@ -11,3 +13,4 @@ export default async function MyCentrePage() {
     </RoleDashboardShell>
   );
 }
+

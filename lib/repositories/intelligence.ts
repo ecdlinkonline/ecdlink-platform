@@ -14,6 +14,7 @@ export function decimalNumber(value: unknown) {
 
 export function roleToDatabase(role: string) {
   if (role === "super_admin") return "SUPER_ADMIN";
+  if (role === "ecdlink_staff") return "ECDLINK_STAFF";
   if (role === "supplier") return "SUPPLIER";
   if (role === "donor") return "DONOR";
   if (role === "funding_partner") return "FUNDING_ORGANISATION";

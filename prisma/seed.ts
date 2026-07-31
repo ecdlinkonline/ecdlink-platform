@@ -71,7 +71,9 @@ const seededTotals = {
   supplierUsers: 0,
   donorUsers: 0,
   fundingOrganisations: 0,
-  fundingUsers: 0
+  fundingUsers: 0,
+  ecdlinkStaffProfiles: 0,
+  ecdlinkStaffAssignments: 0
 };
 
 function money(value: number) {
@@ -105,7 +107,7 @@ async function seedCentres() {
   }
 }
 
-async function upsertUser(input: { clerkUserId: string; email: string; firstName: string; lastName: string; role: "SUPER_ADMIN" | "ECD_CENTRE" | "SUPPLIER" | "DONOR" | "FUNDING_ORGANISATION" | "SYSTEM" }) {
+async function upsertUser(input: { clerkUserId: string; email: string; firstName: string; lastName: string; role: "SUPER_ADMIN" | "ECDLINK_STAFF" | "ECD_CENTRE" | "SUPPLIER" | "DONOR" | "FUNDING_ORGANISATION" | "SYSTEM" }) {
   const role = await prisma.role.findUnique({ where: { key: input.role } });
   const user = await prisma.user.upsert({
     where: { clerkUserId: input.clerkUserId },
@@ -152,6 +154,119 @@ async function seedCoreUsers() {
       create: { centreId: dbCentre.id, userId: user.id, role: "PRINCIPAL", status: "ACTIVE", permissions: permissionsForCentreRole("PRINCIPAL"), isPrimary: true, title: "Principal" }
     });
     seededTotals.centreUsers += 1;
+  }
+}
+
+async function seedEcdlinkStaff() {
+  const admin = await prisma.user.findUnique({ where: { clerkUserId: "seed-super-admin" } });
+  const staffSeeds = [
+    {
+      clerkUserId: "seed-staff-operations-manager",
+      email: "operations.manager@ecdlink.demo",
+      firstName: "Naledi",
+      lastName: "Mokoena",
+      employeeNumber: "ECDL-STAFF-001",
+      jobTitle: "Operations Manager",
+      department: "OPERATIONS" as const,
+      assignmentRole: "Operations Lead"
+    },
+    {
+      clerkUserId: "seed-staff-compliance-officer",
+      email: "compliance.officer@ecdlink.demo",
+      firstName: "Ayesha",
+      lastName: "Peters",
+      employeeNumber: "ECDL-STAFF-002",
+      jobTitle: "Compliance Officer",
+      department: "COMPLIANCE" as const,
+      assignmentRole: "Compliance Support"
+    },
+    {
+      clerkUserId: "seed-staff-social-worker",
+      email: "social.worker@ecdlink.demo",
+      firstName: "Thabo",
+      lastName: "Dlamini",
+      employeeNumber: "ECDL-STAFF-003",
+      jobTitle: "Social Worker",
+      department: "FAMILY_SUPPORT" as const,
+      assignmentRole: "Family Support"
+    },
+    {
+      clerkUserId: "seed-staff-procurement-officer",
+      email: "procurement.officer@ecdlink.demo",
+      firstName: "Megan",
+      lastName: "Jacobs",
+      employeeNumber: "ECDL-STAFF-004",
+      jobTitle: "Procurement Officer",
+      department: "PROCUREMENT" as const,
+      assignmentRole: "Procurement Support"
+    }
+  ];
+  const centres = await prisma.ecdCentre.findMany({ take: 16, orderBy: { centreName: "asc" } });
+
+  for (const [staffIndex, staffSeed] of staffSeeds.entries()) {
+    const user = await upsertUser({
+      clerkUserId: staffSeed.clerkUserId,
+      email: staffSeed.email,
+      firstName: staffSeed.firstName,
+      lastName: staffSeed.lastName,
+      role: "ECDLINK_STAFF"
+    });
+
+    const profile = await prisma.ecdlinkStaffProfile.upsert({
+      where: { userId: user.id },
+      update: {
+        employeeNumber: staffSeed.employeeNumber,
+        firstName: staffSeed.firstName,
+        lastName: staffSeed.lastName,
+        jobTitle: staffSeed.jobTitle,
+        department: staffSeed.department,
+        employmentStatus: "ACTIVE",
+        workEmail: staffSeed.email,
+        isActive: true
+      },
+      create: {
+        userId: user.id,
+        employeeNumber: staffSeed.employeeNumber,
+        firstName: staffSeed.firstName,
+        lastName: staffSeed.lastName,
+        jobTitle: staffSeed.jobTitle,
+        department: staffSeed.department,
+        employmentStatus: "ACTIVE",
+        workEmail: staffSeed.email,
+        startDate: new Date("2026-07-01"),
+        isActive: true
+      }
+    });
+    seededTotals.ecdlinkStaffProfiles += 1;
+
+    const assignedCentres = centres.filter((_, centreIndex) => centreIndex % staffSeeds.length === staffIndex || centreIndex === staffIndex).slice(0, 6);
+    for (const [assignmentIndex, centre] of assignedCentres.entries()) {
+      await prisma.ecdlinkStaffCentreAssignment.upsert({
+        where: {
+          staffProfileId_centreId_assignmentRole: {
+            staffProfileId: profile.id,
+            centreId: centre.id,
+            assignmentRole: staffSeed.assignmentRole
+          }
+        },
+        update: {
+          assignedBy: admin?.id,
+          isPrimary: assignmentIndex === 0,
+          isActive: true,
+          notes: `Seeded ${staffSeed.assignmentRole.toLowerCase()} assignment.`
+        },
+        create: {
+          staffProfileId: profile.id,
+          centreId: centre.id,
+          assignmentRole: staffSeed.assignmentRole,
+          assignedBy: admin?.id,
+          isPrimary: assignmentIndex === 0,
+          isActive: true,
+          notes: `Seeded ${staffSeed.assignmentRole.toLowerCase()} assignment.`
+        }
+      });
+      seededTotals.ecdlinkStaffAssignments += 1;
+    }
   }
 }
 
@@ -1351,6 +1466,7 @@ async function seedFundingPartners() {
 
 function promptRole(role: string) {
   if (role === "super_admin") return "SUPER_ADMIN";
+  if (role === "ecdlink_staff") return "ECDLINK_STAFF";
   if (role === "supplier") return "SUPPLIER";
   if (role === "donor") return "DONOR";
   if (role === "funding_partner") return "FUNDING_ORGANISATION";
@@ -1616,6 +1732,7 @@ async function main() {
   await seedRolesAndPermissions();
   await seedCentres();
   await seedCoreUsers();
+  await seedEcdlinkStaff();
   await seedMemberships();
   await seedCompliance();
   await seedFundingPartners();

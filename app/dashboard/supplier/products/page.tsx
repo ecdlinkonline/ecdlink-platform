@@ -1,3 +1,5 @@
+﻿export const dynamic = "force-dynamic";
+
 import { RoleDashboardShell } from "@/components/app-shell/role-dashboard-shell";
 import { SupplierTabPage } from "@/components/supplier/supplier-tab-page";
 import { getCurrentSupplier, getSupplierInvoices, getSupplierOrders, getSupplierProducts, getSupplierQuotes, getSupplierReport } from "@/lib/supplier/api";
@@ -13,3 +15,4 @@ export default async function SupplierProductsPage() {
     </RoleDashboardShell>
   );
 }
+

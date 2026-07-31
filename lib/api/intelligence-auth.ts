@@ -6,7 +6,7 @@ import type { UserRole } from "@/lib/auth/roles";
 
 export type IntelligenceScope = {
   authRole: UserRole;
-  databaseRole: "SUPER_ADMIN" | "ECD_CENTRE" | "SUPPLIER" | "DONOR" | "FUNDING_ORGANISATION" | "SYSTEM";
+  databaseRole: "SUPER_ADMIN" | "ECDLINK_STAFF" | "ECD_CENTRE" | "SUPPLIER" | "DONOR" | "FUNDING_ORGANISATION" | "SYSTEM";
   userId: string;
   roleId?: string;
   centreIds: string[];
@@ -18,6 +18,7 @@ export type IntelligenceScope = {
 
 function databaseRole(role: UserRole | null): IntelligenceScope["databaseRole"] {
   if (role === "super_admin") return "SUPER_ADMIN";
+  if (role === "ecdlink_staff") return "ECDLINK_STAFF";
   if (role === "supplier") return "SUPPLIER";
   if (role === "donor") return "DONOR";
   if (role === "funding_partner") return "FUNDING_ORGANISATION";

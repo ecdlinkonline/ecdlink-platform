@@ -1,3 +1,5 @@
+﻿export const dynamic = "force-dynamic";
+
 import { RoleDashboardShell } from "@/components/app-shell/role-dashboard-shell";
 import { AdminProcurementConsole } from "@/components/procurement/admin-procurement-console";
 import { getProcurementReports, listCentreOrders, listProducts } from "@/lib/procurement/api";
@@ -11,3 +13,4 @@ export default async function AdminProcurementPage() {
     </RoleDashboardShell>
   );
 }
+

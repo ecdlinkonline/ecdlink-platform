@@ -1,3 +1,5 @@
+﻿export const dynamic = "force-dynamic";
+
 import { RoleDashboardShell } from "@/components/app-shell/role-dashboard-shell";
 import { CentreProcurementModule } from "@/components/procurement/centre-procurement-module";
 import { listCategories, listProducts } from "@/lib/procurement/api";
@@ -11,3 +13,4 @@ export default async function CentreProcurementPage() {
     </RoleDashboardShell>
   );
 }
+

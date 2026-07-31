@@ -14,6 +14,7 @@ import type { UserRole } from "@/lib/auth/roles";
 
 function mapRole(role: UserRole | null) {
   if (role === "super_admin") return "SUPER_ADMIN";
+  if (role === "ecdlink_staff") return "ECDLINK_STAFF";
   if (role === "supplier") return "SUPPLIER";
   if (role === "donor") return "DONOR";
   if (role === "funding_partner") return "FUNDING_ORGANISATION";
@@ -152,4 +153,40 @@ export async function requireFundingPartner(fundingOrganisationIdOrSlug: string)
 
 export async function requireFundingOrganisationAccess(fundingOrganisationIdOrSlug: string) {
   return requireFundingPartner(fundingOrganisationIdOrSlug);
+}
+
+export async function requireEcdlinkStaff() {
+  const context = await requireInternalUser();
+  if (context.authContext.role !== "ecdlink_staff" || !context.internalUser) redirect("/dashboard");
+
+  const staffProfile = await prisma.ecdlinkStaffProfile.findUnique({
+    where: { userId: context.internalUser.id },
+    include: {
+      centreAssignments: {
+        where: { isActive: true },
+        include: { centre: true },
+        orderBy: [{ isPrimary: "desc" }, { assignedAt: "desc" }]
+      }
+    }
+  });
+
+  if (
+    !staffProfile ||
+    !staffProfile.isActive ||
+    staffProfile.employmentStatus === "TERMINATED" ||
+    staffProfile.employmentStatus === "SUSPENDED"
+  ) {
+    redirect("/auth/sign-in");
+  }
+
+  return { ...context, staffProfile };
+}
+
+export async function requireEcdlinkStaffCentreOwnership(centreIdOrSlug: string) {
+  const context = await requireEcdlinkStaff();
+  const assignment = context.staffProfile.centreAssignments.find(
+    (item) => item.centreId === centreIdOrSlug || item.centre.slug === centreIdOrSlug
+  );
+  if (!assignment) redirect("/ecdlink/dashboard");
+  return { ...context, assignment };
 }

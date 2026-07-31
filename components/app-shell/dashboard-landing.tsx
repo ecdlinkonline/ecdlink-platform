@@ -4,9 +4,11 @@ import Link from "next/link";
 import { motion } from "framer-motion";
 import { ArrowRight, Bell, ShieldCheck } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { SuperAdminCommandCentre } from "@/components/app-shell/super-admin-command-centre";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { getDashboardConfig, getRoleNavigation, hasPermission } from "@/config/dashboard";
 import type { UserRole } from "@/lib/auth/roles";
+import type { SuperAdminDashboardData } from "@/lib/dashboard/super-admin-dashboard";
 
 const permissionHighlights = [
   "procurement:manage",
@@ -19,7 +21,23 @@ const permissionHighlights = [
   "messages:read"
 ] as const;
 
-export function DashboardLanding({ role }: { role: UserRole }) {
+type DashboardLandingProps = {
+  role: UserRole;
+  dashboard?: SuperAdminDashboardData;
+};
+
+export function DashboardLanding({
+  role,
+  dashboard,
+}: DashboardLandingProps) {
+if (role === "super_admin") {
+  return (
+    <SuperAdminCommandCentre
+      dashboard={dashboard}
+    />
+  );
+}
+
   const config = getDashboardConfig(role);
   const navigation = getRoleNavigation(role);
   const RoleIcon = config.icon;

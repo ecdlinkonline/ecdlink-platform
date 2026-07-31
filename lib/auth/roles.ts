@@ -1,4 +1,5 @@
 import {
+  BriefcaseBusiness,
   Building2,
   HandHeart,
   Landmark,
@@ -7,7 +8,7 @@ import {
   type LucideIcon
 } from "lucide-react";
 
-export type UserRole = "super_admin" | "ecd_centre" | "supplier" | "donor" | "funding_partner";
+export type UserRole = "super_admin" | "ecd_centre" | "supplier" | "donor" | "funding_partner" | "ecdlink_staff";
 
 export type RoleOption = {
   id: UserRole;
@@ -26,6 +27,14 @@ export const roleOptions: RoleOption[] = [
     description: "Operate the full ECDLink network across centres, suppliers, funding and reporting.",
     dashboardPath: "/dashboard/super-admin",
     icon: ShieldCheck
+  },
+  {
+    id: "ecdlink_staff",
+    title: "ECDLink Staff",
+    shortTitle: "Staff",
+    description: "Manage assigned centre support, field sessions, follow-ups and internal operations.",
+    dashboardPath: "/ecdlink/dashboard",
+    icon: BriefcaseBusiness
   },
   {
     id: "ecd_centre",
@@ -68,7 +77,7 @@ export function isUserRole(value: unknown): value is UserRole {
 }
 
 export function getRoleOption(role: UserRole) {
-  return roleOptions.find((option) => option.id === role) ?? roleOptions[1];
+  return roleOptions.find((option) => option.id === role) ?? roleOptions[2];
 }
 
 export function getDashboardPath(role: UserRole) {

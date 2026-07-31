@@ -3,6 +3,18 @@ export const platformRoles = {
     name: "Super Admin",
     permissions: ["platform:*"]
   },
+  ECDLINK_STAFF: {
+    name: "ECDLink Staff",
+    permissions: [
+      "staff:workspace:read",
+      "staff:centres:read",
+      "staff:sessions:read",
+      "staff:tasks:manage",
+      "staff:messages:read",
+      "staff:documents:read",
+      "staff:reports:read"
+    ]
+  },
   ECD_CENTRE: {
     name: "ECD Centre",
     permissions: ["centre:read", "centre:update", "membership:read", "compliance:manage", "funding:manage", "procurement:manage"]

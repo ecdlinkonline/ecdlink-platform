@@ -1,3 +1,5 @@
+﻿export const dynamic = "force-dynamic";
+
 import { notFound } from "next/navigation";
 import { RoleDashboardShell } from "@/components/app-shell/role-dashboard-shell";
 import { UnifiedCentreProfileView } from "@/components/centre-360/unified-centre-profile";
@@ -21,3 +23,4 @@ export default async function CentreProfilePage({
     </RoleDashboardShell>
   );
 }
+

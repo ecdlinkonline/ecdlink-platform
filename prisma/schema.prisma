@@ -10,6 +10,7 @@ datasource db {
 
 enum UserRole {
   SUPER_ADMIN
+  ECDLINK_STAFF
   ECD_CENTRE
   SUPPLIER
   DONOR
@@ -22,6 +23,27 @@ enum UserStatus {
   INVITED
   SUSPENDED
   ARCHIVED
+}
+
+enum EcdlinkStaffDepartment {
+  OPERATIONS
+  CENTRE_SUPPORT
+  COMPLIANCE
+  FAMILY_SUPPORT
+  PROCUREMENT
+  EVENTS
+  FUNDING
+  TRAINING
+  FINANCE
+  MONITORING_AND_EVALUATION
+  MANAGEMENT
+}
+
+enum EcdlinkStaffEmploymentStatus {
+  ACTIVE
+  ON_LEAVE
+  SUSPENDED
+  TERMINATED
 }
 
 enum CentreUserRole {
@@ -287,32 +309,34 @@ enum IntelligenceDraftStatus {
 }
 
 model User {
-  id                          String                       @id @default(cuid())
-  clerkUserId                 String                       @unique
+  id                          String                         @id @default(cuid())
+  clerkUserId                 String                         @unique
   email                       String?
   firstName                   String?
   lastName                    String?
   phone                       String?
   role                        UserRole
   roleId                      String?
-  status                      UserStatus                   @default(ACTIVE)
+  status                      UserStatus                     @default(ACTIVE)
   lastLoginAt                 DateTime?
-  createdAt                   DateTime                     @default(now())
-  updatedAt                   DateTime                     @updatedAt
-  roleRecord                  Role?                        @relation(fields: [roleId], references: [id])
+  createdAt                   DateTime                       @default(now())
+  updatedAt                   DateTime                       @updatedAt
+  roleRecord                  Role?                          @relation(fields: [roleId], references: [id])
   centreUsers                 CentreUser[]
   supplierUsers               SupplierUser[]
   donorUsers                  DonorUser[]
   fundingUsers                FundingOrganisationUser[]
+  ecdlinkStaffProfile         EcdlinkStaffProfile?
+  assignedStaffCentres        EcdlinkStaffCentreAssignment[] @relation("StaffCentreAssignmentsAssignedBy")
   sessions                    Session[]
-  sentInvitations             Invitation[]                 @relation("InvitationSender")
-  acceptedInvitations         Invitation[]                 @relation("InvitationAcceptedUser")
-  uploadedFiles               FileAsset[]                  @relation("UploadedFiles")
-  submittedDocuments          ComplianceDocument[]         @relation("SubmittedComplianceDocuments")
-  verifiedDocuments           ComplianceDocument[]         @relation("VerifiedDocuments")
-  rejectedDocuments           ComplianceDocument[]         @relation("RejectedComplianceDocuments")
+  sentInvitations             Invitation[]                   @relation("InvitationSender")
+  acceptedInvitations         Invitation[]                   @relation("InvitationAcceptedUser")
+  uploadedFiles               FileAsset[]                    @relation("UploadedFiles")
+  submittedDocuments          ComplianceDocument[]           @relation("SubmittedComplianceDocuments")
+  verifiedDocuments           ComplianceDocument[]           @relation("VerifiedDocuments")
+  rejectedDocuments           ComplianceDocument[]           @relation("RejectedComplianceDocuments")
   auditLogs                   AuditLog[]
-  sentMessages                Message[]                    @relation("SentMessages")
+  sentMessages                Message[]                      @relation("SentMessages")
   membershipPayments          MembershipPayment[]
   intelligenceQueries         IntelligenceQuery[]
   intelligenceRecommendations IntelligenceRecommendation[]
@@ -356,11 +380,58 @@ model RolePermission {
   @@unique([roleId, permissionId])
 }
 
+model EcdlinkStaffProfile {
+  id                String                         @id @default(cuid())
+  userId            String                         @unique
+  employeeNumber    String                         @unique
+  firstName         String
+  lastName          String
+  jobTitle          String
+  department        EcdlinkStaffDepartment
+  employmentStatus  EcdlinkStaffEmploymentStatus   @default(ACTIVE)
+  managerId         String?
+  phoneNumber       String?
+  workEmail         String                         @unique
+  startDate         DateTime?
+  profilePhoto      String?
+  isActive          Boolean                        @default(true)
+  createdAt         DateTime                       @default(now())
+  updatedAt         DateTime                       @updatedAt
+  user              User                           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  manager           EcdlinkStaffProfile?           @relation("StaffManager", fields: [managerId], references: [id])
+  directReports     EcdlinkStaffProfile[]          @relation("StaffManager")
+  centreAssignments EcdlinkStaffCentreAssignment[]
+
+  @@index([department, employmentStatus])
+  @@index([managerId])
+}
+
+model EcdlinkStaffCentreAssignment {
+  id             String              @id @default(cuid())
+  staffProfileId String
+  centreId       String
+  assignmentRole String
+  assignedAt     DateTime            @default(now())
+  assignedBy     String?
+  isPrimary      Boolean             @default(false)
+  isActive       Boolean             @default(true)
+  notes          String?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+  staffProfile   EcdlinkStaffProfile @relation(fields: [staffProfileId], references: [id], onDelete: Cascade)
+  centre         EcdCentre           @relation(fields: [centreId], references: [id], onDelete: Cascade)
+  assignedByUser User?               @relation("StaffCentreAssignmentsAssignedBy", fields: [assignedBy], references: [id])
+
+  @@unique([staffProfileId, centreId, assignmentRole])
+  @@index([centreId, isActive])
+  @@index([staffProfileId, isPrimary])
+}
+
 model EcdCentre {
-  id                          String                       @id @default(cuid())
+  id                          String                         @id @default(cuid())
   centreName                  String
-  slug                        String                       @unique
-  registrationStatus          RegistrationStatus           @default(IN_PROGRESS)
+  slug                        String                         @unique
+  registrationStatus          RegistrationStatus             @default(IN_PROGRESS)
   npoNumber                   String?
   dbeRegistrationStatus       String?
   partialCareStatus           String?
@@ -370,21 +441,21 @@ model EcdCentre {
   region                      String?
   province                    String?
   postalCode                  String?
-  latitude                    Decimal?                     @db.Decimal(10, 7)
-  longitude                   Decimal?                     @db.Decimal(10, 7)
+  latitude                    Decimal?                       @db.Decimal(10, 7)
+  longitude                   Decimal?                       @db.Decimal(10, 7)
   contactPerson               String?
   phone                       String?
   email                       String?
   principalName               String?
   numberOfChildren            Int?
   numberOfStaff               Int?
-  membershipStatus            MembershipStatus             @default(PENDING)
-  procurementStatus           ParticipationStatus          @default(PENDING)
-  complianceStatus            ComplianceStatus             @default(ATTENTION)
-  fundingReadinessStatus      ReadinessStatus              @default(IN_PROGRESS)
+  membershipStatus            MembershipStatus               @default(PENDING)
+  procurementStatus           ParticipationStatus            @default(PENDING)
+  complianceStatus            ComplianceStatus               @default(ATTENTION)
+  fundingReadinessStatus      ReadinessStatus                @default(IN_PROGRESS)
   notes                       String?
-  createdAt                   DateTime                     @default(now())
-  updatedAt                   DateTime                     @updatedAt
+  createdAt                   DateTime                       @default(now())
+  updatedAt                   DateTime                       @updatedAt
   archivedAt                  DateTime?
   users                       CentreUser[]
   photos                      CentrePhoto[]
@@ -407,6 +478,7 @@ model EcdCentre {
   intelligenceProposalDrafts  IntelligenceProposalDraft[]
   intelligenceBudgetDrafts    IntelligenceBudgetDraft[]
   invitations                 Invitation[]
+  staffAssignments            EcdlinkStaffCentreAssignment[]
 
   @@index([slug])
   @@index([area, region, province])

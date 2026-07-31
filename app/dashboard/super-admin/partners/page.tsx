@@ -1,3 +1,5 @@
+﻿export const dynamic = "force-dynamic";
+
 import { RoleDashboardShell } from "@/components/app-shell/role-dashboard-shell";
 import { AdminPartnerDashboard } from "@/components/donor/admin-partner-dashboard";
 import { getDonorReports, listImpactProjects, listPartners, listPartnershipRequests } from "@/lib/donor/api";
@@ -11,3 +13,4 @@ export default async function AdminPartnersPage() {
     </RoleDashboardShell>
   );
 }
+

@@ -1,6 +1,7 @@
 import {
   BarChart3,
   Bell,
+  BriefcaseBusiness,
   Building2,
   CalendarDays,
   ClipboardCheck,
@@ -50,7 +51,14 @@ export type Permission =
   | "messages:read"
   | "donations:manage"
   | "assessments:manage"
-  | "intelligence:read";
+  | "intelligence:read"
+  | "staff:workspace:read"
+  | "staff:centres:read"
+  | "staff:sessions:read"
+  | "staff:tasks:manage"
+  | "staff:messages:read"
+  | "staff:documents:read"
+  | "staff:reports:read";
 
 export type NavigationItem = {
   title: string;
@@ -124,6 +132,45 @@ export const roleDashboardConfig: Record<UserRole, RoleDashboardConfig> = {
       { title: "Procurement", value: "R248k", description: "Monthly network order value", icon: ShoppingCart, href: "/dashboard/super-admin/procurement" },
       { title: "Compliance", value: "72%", description: "Average readiness score", icon: ClipboardCheck, href: "/dashboard/super-admin/compliance" },
       { title: "Funding", value: "38", description: "Applications in pipeline", icon: HandCoins, href: "/dashboard/super-admin/funding" }
+    ]
+  },
+  ecdlink_staff: {
+    role: "ecdlink_staff",
+    label: "ECDLink Staff",
+    eyebrow: "Staff operations",
+    title: "ECDLink Staff Workspace",
+    description: "Manage assigned centre support, sessions, follow-ups, documents, messages and internal reporting.",
+    basePath: "/ecdlink/dashboard",
+    icon: BriefcaseBusiness,
+    permissions: [
+      "staff:workspace:read",
+      "staff:centres:read",
+      "staff:sessions:read",
+      "staff:tasks:manage",
+      "staff:messages:read",
+      "staff:documents:read",
+      "staff:reports:read",
+      "centres:read",
+      "compliance:read",
+      "reports:read",
+      "messages:read"
+    ],
+    navigation: [
+      { title: "Dashboard", href: "/ecdlink/dashboard", icon: LayoutDashboard, permission: "staff:workspace:read" },
+      { title: "My Centres", href: "/ecdlink/centres", icon: Building2, permission: "staff:centres:read" },
+      { title: "Sessions", href: "/ecdlink/sessions", icon: CalendarDays, permission: "staff:sessions:read" },
+      { title: "Tasks & Follow-ups", href: "/ecdlink/tasks", icon: ClipboardList, permission: "staff:tasks:manage" },
+      { title: "Calendar", href: "/ecdlink/calendar", icon: CalendarDays, permission: "staff:sessions:read" },
+      { title: "Messages", href: "/ecdlink/messages", icon: MessageSquare, permission: "staff:messages:read", badge: "4" },
+      { title: "Documents", href: "/ecdlink/documents", icon: FileText, permission: "staff:documents:read" },
+      { title: "Reports", href: "/ecdlink/reports", icon: BarChart3, permission: "staff:reports:read" },
+      { title: "Settings", href: "/ecdlink/settings", icon: Settings }
+    ],
+    cards: [
+      { title: "Assigned Centres", value: "0", description: "Centres linked to your staff profile", icon: Building2, href: "/ecdlink/centres" },
+      { title: "Open Tasks", value: "0", description: "Follow-ups needing action", icon: ClipboardList, href: "/ecdlink/tasks" },
+      { title: "Sessions", value: "0", description: "Upcoming centre engagements", icon: CalendarDays, href: "/ecdlink/sessions" },
+      { title: "Reports", value: "0", description: "Staff reporting workspace", icon: BarChart3, href: "/ecdlink/reports" }
     ]
   },
   ecd_centre: {
