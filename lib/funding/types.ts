@@ -46,6 +46,14 @@ export type FundingReadinessRecord = {
   lastUpdatedAt: string;
 };
 
+export type FundingReadinessLiveRecord = FundingReadinessRecord & {
+  readinessStatus: string;
+  applicationStatus: FundingApplicationStatus;
+  approvedAmount: number;
+  fundingOrganisation: string | null;
+  fundingOpportunity: string | null;
+};
+
 export type FundingFilters = {
   query?: string;
   region?: string;
