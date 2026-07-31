@@ -54,6 +54,84 @@ export type FundingReadinessLiveRecord = FundingReadinessRecord & {
   fundingOpportunity: string | null;
 };
 
+export type FundingReviewApplication = {
+  id: string;
+  applicationNumber: string;
+  projectId: string;
+  projectTitle: string;
+  status: FundingApplicationStatus;
+  requestedAmount: number;
+  approvedAmount: number | null;
+  fundingOrganisation: string | null;
+  fundingOpportunity: string | null;
+  submissionMethod: string | null;
+  externalReference: string | null;
+  submittedAt: string | null;
+  decisionDate: string | null;
+  rejectionReason: string | null;
+  notes: string | null;
+  reviewedByUserId: string | null;
+  updatedAt: string;
+};
+
+export type FundingReviewProject = FundingProjectProfile & {
+  amountSecured: number;
+  fundingGap: number;
+  approvedAt: string | null;
+  updatedAt: string;
+};
+
+export type FundingReviewChecklistItem = {
+  id: string;
+  category: string;
+  label: string;
+  status: string;
+  note: string | null;
+  required: boolean;
+  completedAt: string | null;
+};
+
+export type FundingReviewDocument = {
+  id: string;
+  label: string;
+  documentType: string;
+  status: string;
+  note: string | null;
+  fileId: string | null;
+  uploadedAt: string | null;
+  verifiedAt: string | null;
+  updatedAt: string;
+};
+
+export type FundingReviewReminder = {
+  id: string;
+  title: string;
+  body: string;
+  status: string;
+  dueAt: string | null;
+  createdAt: string;
+};
+
+export type FundingReviewTimelineItem = {
+  id: string;
+  type: "profile" | "application" | "project" | "document" | "reminder";
+  title: string;
+  description: string;
+  status: string | null;
+  occurredAt: string;
+};
+
+export type FundingReviewWorkspaceData = {
+  summary: FundingReadinessLiveRecord;
+  currentApplicationId: string | null;
+  applications: FundingReviewApplication[];
+  projects: FundingReviewProject[];
+  checklistItems: FundingReviewChecklistItem[];
+  supportingDocuments: FundingReviewDocument[];
+  reminders: FundingReviewReminder[];
+  timeline: FundingReviewTimelineItem[];
+};
+
 export type FundingFilters = {
   query?: string;
   region?: string;

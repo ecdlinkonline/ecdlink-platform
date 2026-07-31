@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useState, useTransition } from "react";
+import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { FileText, Search } from "lucide-react";
-import { DataTable, StatusBadge, useToast } from "@/components/design-system";
+import { DataTable, StatusBadge } from "@/components/design-system";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -20,7 +21,6 @@ export function FundingRecordsTable({ records, filters, regions }: { records: Fu
   const searchParams = useSearchParams();
   const [, startTransition] = useTransition();
   const [query, setQuery] = useState(filters.query ?? "");
-  const { pushToast } = useToast();
   const region = filters.region ?? "All";
   const status = filters.status ?? "All";
   const funderType = filters.funderType ?? "All";
@@ -90,15 +90,12 @@ export function FundingRecordsTable({ records, filters, regions }: { records: Fu
               record.funderType,
               String(record.projectProfiles.length),
               <span key="requested" className="font-bold text-brand-navy dark:text-blue-200">{formatFundingCurrency(requested)}</span>,
-              <Button
-                key="action"
-                variant="secondary"
-                className="min-h-9 px-3"
-                onClick={() => pushToast({ title: "Admin note saved", description: `${record.centreName} funding review placeholder updated.` })}
-              >
-                <FileText className="h-4 w-4" />
-                Review
-              </Button>
+              <Link key="action" href={`/dashboard/super-admin/funding/${record.centreId}`}>
+                <Button variant="secondary" className="min-h-9 px-3">
+                  <FileText className="h-4 w-4" />
+                  Review
+                </Button>
+              </Link>
             ];
           })}
         />

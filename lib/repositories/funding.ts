@@ -1,7 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { fundingOpportunityTypes, fundingStatusFromDb } from "@/lib/funding/format";
-import type { FundingFilters, FundingReadinessLiveRecord, FundingReadinessRecord, FundingReport } from "@/lib/funding/types";
+import type { FundingFilters, FundingReadinessLiveRecord, FundingReadinessRecord, FundingReport, FundingReviewTimelineItem, FundingReviewWorkspaceData } from "@/lib/funding/types";
 
 function numberValue(value: unknown) {
   if (typeof value === "number") return value;
@@ -103,18 +103,27 @@ type FundingProfileWithRelations = {
     opportunityType: string | null;
     funderType: string | null;
     requestedAmount: unknown;
+    amountSecured: unknown;
+    fundingGap: unknown;
     beneficiaries: number | null;
     status: string;
     objective: string | null;
+    approvedAt: Date | null;
     updatedAt: Date;
     applications?: Array<{
       id: string;
+      applicationNumber: string;
       status: string;
       requestedAmount: unknown;
       approvedAmount: unknown;
       submittedAt: Date | null;
       decidedAt: Date | null;
       decisionDate: Date | null;
+      submissionMethod: string | null;
+      externalReference: string | null;
+      rejectionReason: string | null;
+      notes: string | null;
+      reviewedByUserId: string | null;
       updatedAt: Date;
       fundingOrganisation: { name: string; type: string | null } | null;
       fundingCall: {
@@ -124,9 +133,9 @@ type FundingProfileWithRelations = {
       } | null;
     }>;
   }>;
-  checklistItems?: Array<{ id: string; label: string; status: string; note: string | null; category: string }>;
-  supportingDocuments?: Array<{ id: string; label: string; status: string; note: string | null }>;
-  reminders?: Array<{ title: string; body: string; dueAt: Date | null; status: string }>;
+  checklistItems?: Array<{ id: string; label: string; status: string; note: string | null; category: string; required: boolean; completedAt: Date | null }>;
+  supportingDocuments?: Array<{ id: string; label: string; documentType: string; status: string; note: string | null; fileId: string | null; uploadedAt: Date | null; verifiedAt: Date | null; updatedAt: Date }>;
+  reminders?: Array<{ id: string; title: string; body: string; dueAt: Date | null; status: string; createdAt: Date }>;
 };
 
 type CurrentFundingApplication = {
@@ -146,6 +155,115 @@ function getCurrentFundingApplication(profile: FundingProfileWithRelations): Cur
   }
 
   return current;
+}
+
+export function buildFundingTimeline(profile: FundingProfileWithRelations): FundingReviewTimelineItem[] {
+  const timeline: FundingReviewTimelineItem[] = [
+    {
+      id: `profile-${profile.id}-updated`,
+      type: "profile",
+      title: "Funding profile updated",
+      description: "The centre funding-readiness profile was updated.",
+      status: profile.readinessStatus,
+      occurredAt: profile.updatedAt.toISOString(),
+    },
+  ];
+
+  if (profile.lastAssessmentDate) {
+    timeline.push({
+      id: `profile-${profile.id}-assessed`,
+      type: "profile",
+      title: "Readiness assessed",
+      description: `Readiness score recorded at ${profile.readinessScore}%.`,
+      status: profile.status,
+      occurredAt: profile.lastAssessmentDate.toISOString(),
+    });
+  }
+
+  for (const project of profile.projects ?? []) {
+    timeline.push({
+      id: `project-${project.id}-updated`,
+      type: "project",
+      title: "Project updated",
+      description: project.title,
+      status: project.status,
+      occurredAt: project.updatedAt.toISOString(),
+    });
+
+    if (project.approvedAt) {
+      timeline.push({
+        id: `project-${project.id}-approved`,
+        type: "project",
+        title: "Project approved for partner review",
+        description: project.title,
+        status: "APPROVED",
+        occurredAt: project.approvedAt.toISOString(),
+      });
+    }
+
+    for (const application of project.applications ?? []) {
+      if (application.submittedAt) {
+        timeline.push({
+          id: `application-${application.id}-submitted`,
+          type: "application",
+          title: "Application submitted",
+          description: `${application.applicationNumber} · ${project.title}`,
+          status: application.status,
+          occurredAt: application.submittedAt.toISOString(),
+        });
+      }
+
+      const decisionDate = application.decidedAt ?? application.decisionDate;
+      if (decisionDate) {
+        timeline.push({
+          id: `application-${application.id}-decided`,
+          type: "application",
+          title: "Application decision recorded",
+          description: `${application.applicationNumber} · ${project.title}`,
+          status: application.status,
+          occurredAt: decisionDate.toISOString(),
+        });
+      }
+    }
+  }
+
+  for (const document of profile.supportingDocuments ?? []) {
+    if (document.uploadedAt) {
+      timeline.push({
+        id: `document-${document.id}-uploaded`,
+        type: "document",
+        title: "Supporting document uploaded",
+        description: document.label,
+        status: document.status,
+        occurredAt: document.uploadedAt.toISOString(),
+      });
+    }
+    if (document.verifiedAt) {
+      timeline.push({
+        id: `document-${document.id}-verified`,
+        type: "document",
+        title: "Supporting document verified",
+        description: document.label,
+        status: document.status,
+        occurredAt: document.verifiedAt.toISOString(),
+      });
+    }
+  }
+
+  for (const reminder of profile.reminders ?? []) {
+    timeline.push({
+      id: `reminder-${reminder.id}-created`,
+      type: "reminder",
+      title: reminder.title,
+      description: reminder.body,
+      status: reminder.status,
+      occurredAt: reminder.createdAt.toISOString(),
+    });
+  }
+
+  return timeline.sort(
+    (left, right) => new Date(right.occurredAt).getTime() - new Date(left.occurredAt).getTime()
+  );
 }
 
 function mapProfile(profile: FundingProfileWithRelations): FundingReadinessLiveRecord {
@@ -233,50 +351,136 @@ function mapProfile(profile: FundingProfileWithRelations): FundingReadinessLiveR
   };
 }
 
-async function fundingProfileQuery(filters: FundingFilters = {}) {
-  return prisma.fundingProfile.findMany({
-    where: buildFundingProfileWhere(filters),
-    include: {
-      centre: { select: { id: true, slug: true, centreName: true, region: true, province: true, area: true, contactPerson: true } },
-      projects: {
+function mapFundingReviewWorkspace(profile: FundingProfileWithRelations): FundingReviewWorkspaceData {
+  const summary = mapProfile(profile);
+  const currentApplication = getCurrentFundingApplication(profile);
+  const applications = (profile.projects ?? []).flatMap((project) =>
+    (project.applications ?? []).map((application) => ({
+      id: application.id,
+      applicationNumber: application.applicationNumber,
+      projectId: project.id,
+      projectTitle: project.title,
+      status: fundingStatusFromDb(application.status),
+      requestedAmount: numberValue(application.requestedAmount),
+      approvedAmount: application.approvedAmount == null ? null : numberValue(application.approvedAmount),
+      fundingOrganisation: application.fundingOrganisation?.name ?? application.fundingCall?.organisation.name ?? null,
+      fundingOpportunity: application.fundingCall?.title ?? project.title ?? project.opportunityType ?? null,
+      submissionMethod: application.submissionMethod,
+      externalReference: application.externalReference,
+      submittedAt: application.submittedAt?.toISOString() ?? null,
+      decisionDate: (application.decidedAt ?? application.decisionDate)?.toISOString() ?? null,
+      rejectionReason: application.rejectionReason,
+      notes: application.notes,
+      reviewedByUserId: application.reviewedByUserId,
+      updatedAt: application.updatedAt.toISOString(),
+    }))
+  ).sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime());
+
+  return {
+    summary,
+    currentApplicationId: currentApplication?.application.id ?? null,
+    applications,
+    projects: (profile.projects ?? []).map((project) => ({
+      id: project.id,
+      title: project.title,
+      opportunityType: (project.opportunityType ?? "Donor funding") as FundingReadinessRecord["funderType"],
+      funderType: (project.funderType ?? project.opportunityType ?? "Donor funding") as FundingReadinessRecord["funderType"],
+      requestedAmount: numberValue(project.requestedAmount),
+      amountSecured: numberValue(project.amountSecured),
+      fundingGap: numberValue(project.fundingGap),
+      beneficiaries: project.beneficiaries ?? 0,
+      status: fundingStatusFromDb(project.status),
+      objective: project.objective ?? "Prepare project profile for funding matching and submission.",
+      approvedAt: project.approvedAt?.toISOString() ?? null,
+      updatedAt: project.updatedAt.toISOString(),
+    })),
+    checklistItems: (profile.checklistItems ?? []).map((item) => ({
+      id: item.id,
+      category: item.category,
+      label: item.label,
+      status: item.status,
+      note: item.note,
+      required: item.required,
+      completedAt: item.completedAt?.toISOString() ?? null,
+    })),
+    supportingDocuments: (profile.supportingDocuments ?? []).map((document) => ({
+      id: document.id,
+      label: document.label,
+      documentType: document.documentType,
+      status: document.status,
+      note: document.note,
+      fileId: document.fileId,
+      uploadedAt: document.uploadedAt?.toISOString() ?? null,
+      verifiedAt: document.verifiedAt?.toISOString() ?? null,
+      updatedAt: document.updatedAt.toISOString(),
+    })),
+    reminders: (profile.reminders ?? []).map((reminder) => ({
+      id: reminder.id,
+      title: reminder.title,
+      body: reminder.body,
+      status: reminder.status,
+      dueAt: reminder.dueAt?.toISOString() ?? null,
+      createdAt: reminder.createdAt.toISOString(),
+    })),
+    timeline: buildFundingTimeline(profile),
+  };
+}
+
+const fundingProfileRelations = {
+  centre: { select: { id: true, slug: true, centreName: true, region: true, province: true, area: true, contactPerson: true } },
+  projects: {
+    orderBy: { updatedAt: "desc" },
+    select: {
+      id: true,
+      title: true,
+      opportunityType: true,
+      funderType: true,
+      requestedAmount: true,
+      amountSecured: true,
+      fundingGap: true,
+      beneficiaries: true,
+      status: true,
+      objective: true,
+      approvedAt: true,
+      updatedAt: true,
+      applications: {
         orderBy: { updatedAt: "desc" },
         select: {
           id: true,
-          title: true,
-          opportunityType: true,
-          funderType: true,
-          requestedAmount: true,
-          beneficiaries: true,
+          applicationNumber: true,
           status: true,
-          objective: true,
+          requestedAmount: true,
+          approvedAmount: true,
+          submissionMethod: true,
+          externalReference: true,
+          submittedAt: true,
+          decidedAt: true,
+          decisionDate: true,
+          rejectionReason: true,
+          notes: true,
+          reviewedByUserId: true,
           updatedAt: true,
-          applications: {
-            orderBy: { updatedAt: "desc" },
+          fundingOrganisation: { select: { name: true, type: true } },
+          fundingCall: {
             select: {
-              id: true,
-              status: true,
-              requestedAmount: true,
-              approvedAmount: true,
-              submittedAt: true,
-              decidedAt: true,
-              decisionDate: true,
-              updatedAt: true,
-              fundingOrganisation: { select: { name: true, type: true } },
-              fundingCall: {
-                select: {
-                  title: true,
-                  type: true,
-                  organisation: { select: { name: true, type: true } }
-                }
-              }
+              title: true,
+              type: true,
+              organisation: { select: { name: true, type: true } }
             }
           }
         }
-      },
-      checklistItems: { orderBy: { displayOrder: "asc" }, select: { id: true, label: true, status: true, note: true, category: true } },
-      supportingDocuments: { orderBy: { createdAt: "asc" }, select: { id: true, label: true, status: true, note: true } },
-      reminders: { orderBy: { createdAt: "desc" }, take: 5, select: { title: true, body: true, dueAt: true, status: true } }
-    },
+      }
+    }
+  },
+  checklistItems: { orderBy: { displayOrder: "asc" }, select: { id: true, label: true, status: true, note: true, category: true, required: true, completedAt: true } },
+  supportingDocuments: { orderBy: { createdAt: "asc" }, select: { id: true, label: true, documentType: true, status: true, note: true, fileId: true, uploadedAt: true, verifiedAt: true, updatedAt: true } },
+  reminders: { orderBy: { createdAt: "desc" }, take: 5, select: { id: true, title: true, body: true, dueAt: true, status: true, createdAt: true } }
+} satisfies Prisma.FundingProfileInclude;
+
+async function fundingProfileQuery(filters: FundingFilters = {}) {
+  return prisma.fundingProfile.findMany({
+    where: buildFundingProfileWhere(filters),
+    include: fundingProfileRelations,
     orderBy: { updatedAt: "desc" }
   });
 }
@@ -297,49 +501,17 @@ export async function listFundingReadinessFromDb(filters: FundingFilters = {}) {
 export async function getFundingReadinessByCentreIdFromDb(centreId: string) {
   const profile = await prisma.fundingProfile.findFirst({
     where: { OR: [{ centreId }, { centre: { slug: centreId } }] },
-    include: {
-      centre: { select: { id: true, slug: true, centreName: true, region: true, province: true, area: true, contactPerson: true } },
-      projects: {
-        orderBy: { updatedAt: "desc" },
-        select: {
-          id: true,
-          title: true,
-          opportunityType: true,
-          funderType: true,
-          requestedAmount: true,
-          beneficiaries: true,
-          status: true,
-          objective: true,
-          updatedAt: true,
-          applications: {
-            orderBy: { updatedAt: "desc" },
-            select: {
-              id: true,
-              status: true,
-              requestedAmount: true,
-              approvedAmount: true,
-              submittedAt: true,
-              decidedAt: true,
-              decisionDate: true,
-              updatedAt: true,
-              fundingOrganisation: { select: { name: true, type: true } },
-              fundingCall: {
-                select: {
-                  title: true,
-                  type: true,
-                  organisation: { select: { name: true, type: true } }
-                }
-              }
-            }
-          }
-        }
-      },
-      checklistItems: { orderBy: { displayOrder: "asc" }, select: { id: true, label: true, status: true, note: true, category: true } },
-      supportingDocuments: { orderBy: { createdAt: "asc" }, select: { id: true, label: true, status: true, note: true } },
-      reminders: { orderBy: { createdAt: "desc" }, take: 5, select: { title: true, body: true, dueAt: true, status: true } }
-    }
+    include: fundingProfileRelations
   });
   return profile ? mapProfile(profile as FundingProfileWithRelations) : null;
+}
+
+export async function getFundingReviewWorkspaceFromDb(centreId: string): Promise<FundingReviewWorkspaceData | null> {
+  const profile = await prisma.fundingProfile.findFirst({
+    where: { OR: [{ centreId }, { centre: { slug: centreId } }] },
+    include: fundingProfileRelations
+  });
+  return profile ? mapFundingReviewWorkspace(profile as FundingProfileWithRelations) : null;
 }
 
 export async function getFundingReportsFromDb(): Promise<FundingReport> {
