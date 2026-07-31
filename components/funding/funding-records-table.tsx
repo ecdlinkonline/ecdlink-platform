@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useState, useTransition } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { FileText, Search } from "lucide-react";
 import { DataTable, StatusBadge, useToast } from "@/components/design-system";
 import { Badge } from "@/components/ui/badge";
@@ -8,46 +9,41 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { formatFundingCurrency, fundingOpportunityTypes } from "@/lib/funding/format";
-import type { FundingApplicationStatus, FundingOpportunityType, FundingReadinessRecord } from "@/lib/funding/types";
+import type { FundingApplicationStatus, FundingFilters, FundingOpportunityType, FundingReadinessRecord } from "@/lib/funding/types";
 
 const statuses: Array<FundingApplicationStatus | "All"> = ["All", "Draft", "In Progress", "Ready", "Submitted", "Approved", "Rejected"];
 const readinessBands = ["All", "80+", "50-79", "Below 50"] as const;
 
-export function FundingRecordsTable({ records }: { records: FundingReadinessRecord[] }) {
-  const [query, setQuery] = useState("");
-  const [region, setRegion] = useState("All");
-  const [status, setStatus] = useState<FundingApplicationStatus | "All">("All");
-  const [funderType, setFunderType] = useState<FundingOpportunityType | "All">("All");
-  const [readinessBand, setReadinessBand] = useState<(typeof readinessBands)[number]>("All");
+export function FundingRecordsTable({ records, filters, regions }: { records: FundingReadinessRecord[]; filters: FundingFilters; regions: string[] }) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const [, startTransition] = useTransition();
+  const [query, setQuery] = useState(filters.query ?? "");
   const { pushToast } = useToast();
-  const regions = useMemo(() => ["All", ...Array.from(new Set(records.map((record) => record.region)))], [records]);
+  const region = filters.region ?? "All";
+  const status = filters.status ?? "All";
+  const funderType = filters.funderType ?? "All";
+  const readinessBand = filters.readinessBand ?? "All";
 
-  const filteredRecords = useMemo(() => {
-    const search = query.trim().toLowerCase();
-    return records.filter((record) => {
-      const searchable = [
-        record.centreName,
-        record.region,
-        record.area,
-        record.status,
-        record.funderType,
-        ...record.projectProfiles.map((project) => project.title)
-      ].join(" ").toLowerCase();
-      const bandMatch =
-        readinessBand === "All" ||
-        (readinessBand === "80+" && record.readinessScore >= 80) ||
-        (readinessBand === "50-79" && record.readinessScore >= 50 && record.readinessScore < 80) ||
-        (readinessBand === "Below 50" && record.readinessScore < 50);
+  const updateFilter = useCallback((key: keyof FundingFilters, value: string) => {
+    const params = new URLSearchParams(searchParams.toString());
+    if (!value || value === "All") params.delete(key);
+    else params.set(key, value);
+    const nextUrl = params.size ? `${pathname}?${params.toString()}` : pathname;
+    startTransition(() => router.replace(nextUrl, { scroll: false }));
+  }, [pathname, router, searchParams]);
 
-      return (
-        (!search || searchable.includes(search)) &&
-        (region === "All" || record.region === region) &&
-        (status === "All" || record.status === status) &&
-        (funderType === "All" || record.funderType === funderType) &&
-        bandMatch
-      );
-    });
-  }, [funderType, query, readinessBand, records, region, status]);
+  useEffect(() => {
+    setQuery(filters.query ?? "");
+  }, [filters.query]);
+
+  useEffect(() => {
+    const activeQuery = filters.query ?? "";
+    if (query === activeQuery) return;
+    const timeout = window.setTimeout(() => updateFilter("query", query.trim()), 300);
+    return () => window.clearTimeout(timeout);
+  }, [filters.query, query, updateFilter]);
 
   return (
     <Card className="dark:border-slate-800 dark:bg-slate-900">
@@ -57,23 +53,23 @@ export function FundingRecordsTable({ records }: { records: FundingReadinessReco
             <CardTitle className="dark:text-white">Centre funding readiness</CardTitle>
             <CardDescription className="dark:text-slate-400">Search and filter by centre, region, status, readiness score and funder type.</CardDescription>
           </div>
-          <Badge variant="muted">{filteredRecords.length} centres shown</Badge>
+          <Badge variant="muted">{records.length} centres shown</Badge>
         </div>
         <div className="grid gap-3 xl:grid-cols-[1fr_150px_160px_190px_140px]">
           <label className="flex min-h-11 items-center gap-2 rounded-lg border border-brand-line bg-white px-3 text-sm text-slate-600 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300">
             <Search className="h-4 w-4 text-slate-400" />
             <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search centres or projects" className="w-full bg-transparent outline-none" />
           </label>
-          <select value={region} onChange={(event) => setRegion(event.target.value)} className="rounded-lg border border-brand-line bg-white px-3 text-sm font-semibold text-slate-700 outline-none dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200">
-            {regions.map((item) => <option key={item}>{item}</option>)}
+          <select value={region} onChange={(event) => updateFilter("region", event.target.value)} className="rounded-lg border border-brand-line bg-white px-3 text-sm font-semibold text-slate-700 outline-none dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200">
+            {["All", ...regions].map((item) => <option key={item}>{item}</option>)}
           </select>
-          <select value={status} onChange={(event) => setStatus(event.target.value as FundingApplicationStatus | "All")} className="rounded-lg border border-brand-line bg-white px-3 text-sm font-semibold text-slate-700 outline-none dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200">
+          <select value={status} onChange={(event) => updateFilter("status", event.target.value)} className="rounded-lg border border-brand-line bg-white px-3 text-sm font-semibold text-slate-700 outline-none dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200">
             {statuses.map((item) => <option key={item}>{item}</option>)}
           </select>
-          <select value={funderType} onChange={(event) => setFunderType(event.target.value as FundingOpportunityType | "All")} className="rounded-lg border border-brand-line bg-white px-3 text-sm font-semibold text-slate-700 outline-none dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200">
+          <select value={funderType} onChange={(event) => updateFilter("funderType", event.target.value)} className="rounded-lg border border-brand-line bg-white px-3 text-sm font-semibold text-slate-700 outline-none dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200">
             {(["All", ...fundingOpportunityTypes] as Array<FundingOpportunityType | "All">).map((item) => <option key={item}>{item}</option>)}
           </select>
-          <select value={readinessBand} onChange={(event) => setReadinessBand(event.target.value as (typeof readinessBands)[number])} className="rounded-lg border border-brand-line bg-white px-3 text-sm font-semibold text-slate-700 outline-none dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200">
+          <select value={readinessBand} onChange={(event) => updateFilter("readinessBand", event.target.value)} className="rounded-lg border border-brand-line bg-white px-3 text-sm font-semibold text-slate-700 outline-none dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200">
             {readinessBands.map((item) => <option key={item}>{item}</option>)}
           </select>
         </div>
@@ -81,7 +77,7 @@ export function FundingRecordsTable({ records }: { records: FundingReadinessReco
       <CardContent>
         <DataTable
           columns={["Centre", "Region", "Status", "Readiness", "Funder Type", "Projects", "Requested", "Actions"]}
-          rows={filteredRecords.map((record) => {
+          rows={records.map((record) => {
             const requested = record.projectProfiles.reduce((sum, project) => sum + project.requestedAmount, 0);
             return [
               <span key="centre" className="font-bold text-brand-ink dark:text-white">{record.centreName}</span>,

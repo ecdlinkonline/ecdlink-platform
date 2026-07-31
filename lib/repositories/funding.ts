@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { fundingOpportunityTypes, fundingStatusFromDb } from "@/lib/funding/format";
 import type { FundingFilters, FundingReadinessLiveRecord, FundingReadinessRecord, FundingReport } from "@/lib/funding/types";
@@ -13,8 +14,66 @@ function dateValue(value: Date | string | null | undefined) {
   return new Date(value).toISOString().slice(0, 10);
 }
 
-function matchesReadinessBand(score: number, band?: FundingFilters["readinessBand"]) {
-  return !band || band === "All" || (band === "80+" && score >= 80) || (band === "50-79" && score >= 50 && score < 80) || (band === "Below 50" && score < 50);
+function buildFundingProfileWhere(filters: FundingFilters): Prisma.FundingProfileWhereInput {
+  const query = filters.query?.trim();
+  const region = filters.region && filters.region !== "All" ? filters.region : undefined;
+  const funderType = filters.funderType && filters.funderType !== "All" ? filters.funderType : undefined;
+
+  // Search can be expressed safely in Prisma because every searchable value is stored on a related database record.
+  const searchFilter: Prisma.FundingProfileWhereInput | undefined = query
+    ? {
+        OR: [
+          { centre: { centreName: { contains: query, mode: "insensitive" } } },
+          { projects: { some: { title: { contains: query, mode: "insensitive" } } } },
+          { projects: { some: { applications: { some: { fundingOrganisation: { is: { name: { contains: query, mode: "insensitive" } } } } } } } },
+          { projects: { some: { applications: { some: { fundingCall: { is: { title: { contains: query, mode: "insensitive" } } } } } } } },
+        ],
+      }
+    : undefined;
+
+  // Region is safe in Prisma; the second branch mirrors the mapper's province fallback when region is absent.
+  const regionFilter: Prisma.FundingProfileWhereInput | undefined = region
+    ? region === "Unassigned"
+      ? { centre: { region: null, province: null } }
+      : {
+          OR: [
+            { centre: { region } },
+            { centre: { region: null, province: region } },
+          ],
+        }
+    : undefined;
+
+  // Funding type is safe in Prisma because matching any related project or application preserves one profile row.
+  const fundingTypeFilter: Prisma.FundingProfileWhereInput | undefined = funderType
+    ? {
+        projects: {
+          some: {
+            OR: [
+              { funderType },
+              { opportunityType: funderType },
+              { applications: { some: { fundingOrganisation: { is: { type: funderType } } } } },
+              { applications: { some: { fundingCall: { is: { type: funderType } } } } },
+            ],
+          },
+        },
+      }
+    : undefined;
+
+  // Readiness bands map directly to numeric comparisons on FundingProfile.readinessScore.
+  const readinessFilter: Prisma.FundingProfileWhereInput | undefined =
+    filters.readinessBand === "80+"
+      ? { readinessScore: { gte: 80 } }
+      : filters.readinessBand === "50-79"
+        ? { readinessScore: { gte: 50, lt: 80 } }
+        : filters.readinessBand === "Below 50"
+          ? { readinessScore: { lt: 50 } }
+          : undefined;
+
+  return {
+    AND: [searchFilter, regionFilter, fundingTypeFilter, readinessFilter].filter(
+      (filter): filter is Prisma.FundingProfileWhereInput => Boolean(filter)
+    ),
+  };
 }
 
 type FundingProfileWithRelations = {
@@ -174,8 +233,9 @@ function mapProfile(profile: FundingProfileWithRelations): FundingReadinessLiveR
   };
 }
 
-async function fundingProfileQuery() {
+async function fundingProfileQuery(filters: FundingFilters = {}) {
   return prisma.fundingProfile.findMany({
+    where: buildFundingProfileWhere(filters),
     include: {
       centre: { select: { id: true, slug: true, centreName: true, region: true, province: true, area: true, contactPerson: true } },
       projects: {
@@ -222,19 +282,16 @@ async function fundingProfileQuery() {
 }
 
 export async function listFundingReadinessFromDb(filters: FundingFilters = {}) {
-  const profiles = (await fundingProfileQuery()) as FundingProfileWithRelations[];
+  const profiles = (await fundingProfileQuery(filters)) as FundingProfileWithRelations[];
   const records = profiles.map(mapProfile);
-  const query = filters.query?.trim().toLowerCase() ?? "";
-  return records.filter((record) => {
-    const searchable = [record.centreName, record.region, record.area, record.contactPerson, record.status, record.funderType, ...record.projectProfiles.map((project) => `${project.title} ${project.funderType}`)].join(" ").toLowerCase();
-    return (
-      (!query || searchable.includes(query)) &&
-      (!filters.region || filters.region === "All" || record.region === filters.region) &&
-      (!filters.status || filters.status === "All" || record.status === filters.status) &&
-      (!filters.funderType || filters.funderType === "All" || record.funderType === filters.funderType) &&
-      matchesReadinessBand(record.readinessScore, filters.readinessBand)
-    );
-  });
+
+  // Current status cannot be represented safely by `some` in Prisma: it must describe the newest application,
+  // so filter the mapped server result produced by the shared getCurrentFundingApplication helper.
+  if (filters.status && filters.status !== "All") {
+    return records.filter((record) => record.applicationStatus === filters.status);
+  }
+
+  return records;
 }
 
 export async function getFundingReadinessByCentreIdFromDb(centreId: string) {

@@ -8,9 +8,9 @@ import { FundingRecordsTable } from "@/components/funding/funding-records-table"
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatFundingCurrency } from "@/lib/funding/format";
-import type { FundingReadinessRecord, FundingReport } from "@/lib/funding/types";
+import type { FundingFilters, FundingReadinessRecord, FundingReport } from "@/lib/funding/types";
 
-export function AdminFundingDashboard({ records, reports }: { records: FundingReadinessRecord[]; reports: FundingReport }) {
+export function AdminFundingDashboard({ records, reports, filters = {} }: { records: FundingReadinessRecord[]; reports: FundingReport; filters?: FundingFilters }) {
   const activeProjects = records.flatMap((record) => record.projectProfiles.map((project) => ({ ...project, centreName: record.centreName, region: record.region }))).slice(0, 10);
 
   return (
@@ -32,7 +32,7 @@ export function AdminFundingDashboard({ records, reports }: { records: FundingRe
         <KpiCard label="Total Requested" value={formatFundingCurrency(reports.totalRequested)} description="All project profiles" icon={HandCoins} tone="navy" />
       </div>
 
-      <FundingRecordsTable records={records} />
+      <FundingRecordsTable records={records} filters={filters} regions={reports.regionalReadiness.map(({ label }) => label)} />
 
       <div className="grid gap-6 xl:grid-cols-2">
         <Card className="dark:border-slate-800 dark:bg-slate-900">
