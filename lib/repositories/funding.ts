@@ -1,7 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { fundingOpportunityTypes, fundingStatusFromDb } from "@/lib/funding/format";
-import type { FundingFilters, FundingReadinessLiveRecord, FundingReadinessRecord, FundingReport, FundingReviewTimelineItem, FundingReviewWorkspaceData } from "@/lib/funding/types";
+import type { FundingFilters, FundingReadinessLiveRecord, FundingReadinessRecord, FundingReport, FundingReviewerOption, FundingReviewTimelineItem, FundingReviewWorkspaceData } from "@/lib/funding/types";
 
 function numberValue(value: unknown) {
   if (typeof value === "number") return value;
@@ -351,7 +351,7 @@ function mapProfile(profile: FundingProfileWithRelations): FundingReadinessLiveR
   };
 }
 
-function mapFundingReviewWorkspace(profile: FundingProfileWithRelations): FundingReviewWorkspaceData {
+function mapFundingReviewWorkspace(profile: FundingProfileWithRelations, reviewers: FundingReviewerOption[]): FundingReviewWorkspaceData {
   const summary = mapProfile(profile);
   const currentApplication = getCurrentFundingApplication(profile);
   const applications = (profile.projects ?? []).flatMap((project) =>
@@ -423,6 +423,7 @@ function mapFundingReviewWorkspace(profile: FundingProfileWithRelations): Fundin
       createdAt: reminder.createdAt.toISOString(),
     })),
     timeline: buildFundingTimeline(profile),
+    reviewers,
   };
 }
 
@@ -507,11 +508,25 @@ export async function getFundingReadinessByCentreIdFromDb(centreId: string) {
 }
 
 export async function getFundingReviewWorkspaceFromDb(centreId: string): Promise<FundingReviewWorkspaceData | null> {
-  const profile = await prisma.fundingProfile.findFirst({
-    where: { OR: [{ centreId }, { centre: { slug: centreId } }] },
-    include: fundingProfileRelations
-  });
-  return profile ? mapFundingReviewWorkspace(profile as FundingProfileWithRelations) : null;
+  const [profile, reviewerUsers] = await Promise.all([
+    prisma.fundingProfile.findFirst({
+      where: { OR: [{ centreId }, { centre: { slug: centreId } }] },
+      include: fundingProfileRelations
+    }),
+    prisma.user.findMany({
+      where: {
+        status: "ACTIVE",
+        role: { in: ["SUPER_ADMIN", "FUNDING_ORGANISATION"] },
+      },
+      select: { id: true, firstName: true, lastName: true, email: true },
+      orderBy: [{ firstName: "asc" }, { lastName: "asc" }, { email: "asc" }],
+    }),
+  ]);
+  const reviewers = reviewerUsers.map((reviewer) => ({
+    value: reviewer.id,
+    label: [reviewer.firstName, reviewer.lastName].filter(Boolean).join(" ") || reviewer.email || "Unnamed reviewer",
+  }));
+  return profile ? mapFundingReviewWorkspace(profile as FundingProfileWithRelations, reviewers) : null;
 }
 
 export async function getFundingReportsFromDb(): Promise<FundingReport> {

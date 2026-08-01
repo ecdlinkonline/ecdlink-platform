@@ -8,6 +8,9 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { RequestClarificationDialog } from "@/components/funding/request-clarification-dialog";
+import { ApproveApplicationDialog } from "@/components/funding/approve-application-dialog";
+import { AssignReviewerDialog } from "@/components/funding/assign-reviewer-dialog";
+import { RejectApplicationDialog } from "@/components/funding/reject-application-dialog";
 import { formatFundingCurrency } from "@/lib/funding/format";
 import type { FundingReviewWorkspaceData } from "@/lib/funding/types";
 
@@ -82,10 +85,12 @@ export function FundingReviewWorkspace({ data }: { data: FundingReviewWorkspaceD
                     ["Decision", formatDate(currentApplication.decisionDate)],
                   ]} />
                   {!['Approved', 'Rejected'].includes(currentApplication.status) ? (
-                    <RequestClarificationDialog
-                      applicationId={currentApplication.id}
-                      applicationNumber={currentApplication.applicationNumber}
-                    />
+                    <div className="flex flex-wrap gap-2">
+                      <RequestClarificationDialog applicationId={currentApplication.id} applicationNumber={currentApplication.applicationNumber} />
+                      <ApproveApplicationDialog applicationId={currentApplication.id} applicationNumber={currentApplication.applicationNumber} />
+                      <RejectApplicationDialog applicationId={currentApplication.id} applicationNumber={currentApplication.applicationNumber} />
+                      <AssignReviewerDialog applicationId={currentApplication.id} applicationNumber={currentApplication.applicationNumber} reviewers={data.reviewers} />
+                    </div>
                   ) : null}
                 </div>
               ) : <EmptyState>No funding applications have been created for this centre.</EmptyState>}

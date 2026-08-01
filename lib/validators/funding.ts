@@ -77,16 +77,46 @@ export const createFundingApplicationSchema = z.object({
 });
 
 export const applicationDecisionSchema = z.object({
-  status: z.enum(["Approved", "Rejected", "Submitted", "In Progress", "Clarification Requested"]),
+  action: z.enum(["decision", "assign_reviewer"]).default("decision"),
+  status: z.enum(["Approved", "Rejected", "Submitted", "In Progress", "Clarification Requested"]).optional(),
   approvedAmount: z.coerce.number().nonnegative().optional(),
   rejectionReason: z.string().optional(),
-  notes: z.string().optional()
+  notes: z.string().optional(),
+  reviewerUserId: z.string().optional()
 }).superRefine((input, context) => {
+  if (input.action === "decision" && !input.status) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["status"],
+      message: "A decision status is required."
+    });
+  }
+  if (input.status === "Approved" && (!input.approvedAmount || input.approvedAmount <= 0)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["approvedAmount"],
+      message: "Approved amount must be greater than zero."
+    });
+  }
+  if (input.status === "Rejected" && !input.rejectionReason?.trim()) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["rejectionReason"],
+      message: "A rejection reason is required."
+    });
+  }
   if (input.status === "Clarification Requested" && !input.notes?.trim()) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["notes"],
       message: "A clarification message is required."
+    });
+  }
+  if (input.action === "assign_reviewer" && !input.reviewerUserId?.trim()) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["reviewerUserId"],
+      message: "A reviewer is required."
     });
   }
 });

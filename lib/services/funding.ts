@@ -173,8 +173,72 @@ export async function createFundingApplication(input: z.infer<typeof createFundi
 }
 
 export async function decideFundingApplication(applicationId: string, input: z.infer<typeof applicationDecisionSchema>, actorUserId: string) {
-  const before = await prisma.fundingApplication.findUnique({ where: { id: applicationId } });
+  const [before, actor] = await Promise.all([
+    prisma.fundingApplication.findUnique({ where: { id: applicationId } }),
+    prisma.user.findUnique({
+      where: { id: actorUserId },
+      include: { fundingUsers: { select: { fundingOrganisationId: true } } },
+    }),
+  ]);
   if (!before) throw new Error("Funding application was not found.");
+  if (!actor || actor.status !== "ACTIVE" || !["SUPER_ADMIN", "FUNDING_ORGANISATION"].includes(actor.role)) {
+    throw new Error("The acting user is not permitted to manage funding applications.");
+  }
+
+  const appendNote = (existing: string | null, note?: string) => {
+    const trimmedNote = note?.trim();
+    if (!trimmedNote) return undefined;
+    return existing ? `${existing}\n${trimmedNote}` : trimmedNote;
+  };
+
+  if (input.action === "assign_reviewer") {
+    const reviewer = await prisma.user.findUnique({
+      where: { id: input.reviewerUserId },
+      include: { fundingUsers: { select: { fundingOrganisationId: true } } },
+    });
+    const reviewerHasEligibleRole = reviewer && ["SUPER_ADMIN", "FUNDING_ORGANISATION"].includes(reviewer.role);
+    const actorOrganisationIds = actor.fundingUsers.map((membership) => membership.fundingOrganisationId);
+    const reviewerOrganisationIds = reviewer?.fundingUsers.map((membership) => membership.fundingOrganisationId) ?? [];
+    const reviewerIsEligible = Boolean(
+      reviewer &&
+      reviewer.status === "ACTIVE" &&
+      reviewerHasEligibleRole &&
+      (actor.role === "SUPER_ADMIN" || (
+        actor.role === "FUNDING_ORGANISATION" &&
+        reviewer.role === "FUNDING_ORGANISATION" &&
+        before.fundingOrganisationId &&
+        actorOrganisationIds.includes(before.fundingOrganisationId) &&
+        reviewerOrganisationIds.includes(before.fundingOrganisationId)
+      ))
+    );
+    if (!reviewerIsEligible) {
+      throw new Error("The selected reviewer is not eligible for this funding application.");
+    }
+
+    const after = await prisma.fundingApplication.update({
+      where: { id: applicationId },
+      data: {
+        reviewedByUserId: reviewer!.id,
+        notes: appendNote(before.notes, input.notes),
+      },
+    });
+    await createAuditLog({
+      actorUserId,
+      action: "funding.application.reviewer.assigned",
+      entityType: "FundingApplication",
+      entityId: applicationId,
+      before,
+      after,
+      metadata: {
+        previousReviewerUserId: before.reviewedByUserId,
+        newReviewerUserId: reviewer!.id,
+        actorUserId,
+      },
+    });
+    return after;
+  }
+
+  if (!input.status) throw new Error("A decision status is required.");
 
   const isClarificationRequest = input.status === "Clarification Requested";
   if (
@@ -184,27 +248,41 @@ export async function decideFundingApplication(applicationId: string, input: z.i
     throw new Error("Clarification can only be requested for an active submitted application.");
   }
 
+  const isTerminalDecision = ["Approved", "Rejected"].includes(input.status);
+  if (
+    isTerminalDecision &&
+    (!before.submittedAt ||
+      ["APPROVED", "REJECTED", "WITHDRAWN"].includes(before.status) ||
+      !["SUBMITTED", "UNDER_REVIEW", "CLARIFICATION_REQUESTED"].includes(before.status))
+  ) {
+    throw new Error("This application cannot be approved or rejected from its current status.");
+  }
+
   const clarificationReason = isClarificationRequest ? input.notes?.trim() : undefined;
   const clarificationNote = clarificationReason ? `Clarification requested: ${clarificationReason}` : undefined;
+  const decisionNote = clarificationNote ?? input.notes;
+  const decisionDate = isTerminalDecision ? new Date() : undefined;
   const after = await prisma.fundingApplication.update({
     where: { id: applicationId },
     data: {
       status: fundingStatusToDb(input.status),
       approvedAmount: input.approvedAmount === undefined ? undefined : money(input.approvedAmount),
-      rejectionReason: input.rejectionReason,
-      notes: clarificationNote
-        ? before.notes
-          ? `${before.notes}\n${clarificationNote}`
-          : clarificationNote
-        : input.notes,
+      rejectionReason: input.rejectionReason?.trim(),
+      notes: appendNote(before.notes, decisionNote),
       reviewedByUserId: actorUserId,
-      decidedAt: ["Approved", "Rejected"].includes(input.status) ? new Date() : undefined,
-      decisionDate: ["Approved", "Rejected"].includes(input.status) ? new Date() : undefined
+      decidedAt: decisionDate,
+      decisionDate
     }
   });
   await createAuditLog({
     actorUserId,
-    action: isClarificationRequest ? "funding.application.clarification.requested" : "funding.application.decision",
+    action: isClarificationRequest
+      ? "funding.application.clarification.requested"
+      : input.status === "Approved"
+        ? "funding.application.approved"
+        : input.status === "Rejected"
+          ? "funding.application.rejected"
+          : "funding.application.decision",
     entityType: "FundingApplication",
     entityId: applicationId,
     before,

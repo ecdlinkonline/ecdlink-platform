@@ -121,6 +121,11 @@ export type FundingReviewTimelineItem = {
   occurredAt: string;
 };
 
+export type FundingReviewerOption = {
+  value: string;
+  label: string;
+};
+
 export type FundingReviewWorkspaceData = {
   summary: FundingReadinessLiveRecord;
   currentApplicationId: string | null;
@@ -130,6 +135,7 @@ export type FundingReviewWorkspaceData = {
   supportingDocuments: FundingReviewDocument[];
   reminders: FundingReviewReminder[];
   timeline: FundingReviewTimelineItem[];
+  reviewers: FundingReviewerOption[];
 };
 
 export type FundingFilters = {
