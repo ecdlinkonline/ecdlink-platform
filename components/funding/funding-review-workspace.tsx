@@ -7,6 +7,7 @@ import { DataTable, KpiCard, PageHeader, StatusBadge } from "@/components/design
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
+import { RequestClarificationDialog } from "@/components/funding/request-clarification-dialog";
 import { formatFundingCurrency } from "@/lib/funding/format";
 import type { FundingReviewWorkspaceData } from "@/lib/funding/types";
 
@@ -71,14 +72,22 @@ export function FundingReviewWorkspace({ data }: { data: FundingReviewWorkspaceD
             <CardHeader><CardTitle className="dark:text-white">Current funding position</CardTitle><CardDescription className="dark:text-slate-400">Latest application and funding relationship.</CardDescription></CardHeader>
             <CardContent>
               {currentApplication ? (
-                <DataTable columns={["Field", "Value"]} rows={[
-                  ["Application", currentApplication.applicationNumber],
-                  ["Status", <StatusBadge key="status" status={currentApplication.status} />],
-                  ["Funding organisation", currentApplication.fundingOrganisation ?? "Not assigned"],
-                  ["Funding opportunity", currentApplication.fundingOpportunity ?? "Not assigned"],
-                  ["Submitted", formatDate(currentApplication.submittedAt)],
-                  ["Decision", formatDate(currentApplication.decisionDate)],
-                ]} />
+                <div className="space-y-4">
+                  <DataTable columns={["Field", "Value"]} rows={[
+                    ["Application", currentApplication.applicationNumber],
+                    ["Status", <StatusBadge key="status" status={currentApplication.status} />],
+                    ["Funding organisation", currentApplication.fundingOrganisation ?? "Not assigned"],
+                    ["Funding opportunity", currentApplication.fundingOpportunity ?? "Not assigned"],
+                    ["Submitted", formatDate(currentApplication.submittedAt)],
+                    ["Decision", formatDate(currentApplication.decisionDate)],
+                  ]} />
+                  {!['Approved', 'Rejected'].includes(currentApplication.status) ? (
+                    <RequestClarificationDialog
+                      applicationId={currentApplication.id}
+                      applicationNumber={currentApplication.applicationNumber}
+                    />
+                  ) : null}
+                </div>
               ) : <EmptyState>No funding applications have been created for this centre.</EmptyState>}
             </CardContent>
           </Card>

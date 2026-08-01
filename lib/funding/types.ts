@@ -8,7 +8,7 @@ export type FundingOpportunityType =
   | "Infrastructure funding"
   | "Training funding";
 
-export type FundingApplicationStatus = "Draft" | "In Progress" | "Ready" | "Submitted" | "Approved" | "Rejected";
+export type FundingApplicationStatus = "Draft" | "In Progress" | "Ready" | "Submitted" | "Clarification Requested" | "Approved" | "Rejected";
 
 export type FundingChecklistItem = {
   id: string;

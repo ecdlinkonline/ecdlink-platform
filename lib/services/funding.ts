@@ -174,19 +174,43 @@ export async function createFundingApplication(input: z.infer<typeof createFundi
 
 export async function decideFundingApplication(applicationId: string, input: z.infer<typeof applicationDecisionSchema>, actorUserId: string) {
   const before = await prisma.fundingApplication.findUnique({ where: { id: applicationId } });
+  if (!before) throw new Error("Funding application was not found.");
+
+  const isClarificationRequest = input.status === "Clarification Requested";
+  if (
+    isClarificationRequest &&
+    (!before.submittedAt || ["APPROVED", "REJECTED", "WITHDRAWN"].includes(before.status))
+  ) {
+    throw new Error("Clarification can only be requested for an active submitted application.");
+  }
+
+  const clarificationReason = isClarificationRequest ? input.notes?.trim() : undefined;
+  const clarificationNote = clarificationReason ? `Clarification requested: ${clarificationReason}` : undefined;
   const after = await prisma.fundingApplication.update({
     where: { id: applicationId },
     data: {
       status: fundingStatusToDb(input.status),
       approvedAmount: input.approvedAmount === undefined ? undefined : money(input.approvedAmount),
       rejectionReason: input.rejectionReason,
-      notes: input.notes,
+      notes: clarificationNote
+        ? before.notes
+          ? `${before.notes}\n${clarificationNote}`
+          : clarificationNote
+        : input.notes,
       reviewedByUserId: actorUserId,
       decidedAt: ["Approved", "Rejected"].includes(input.status) ? new Date() : undefined,
       decisionDate: ["Approved", "Rejected"].includes(input.status) ? new Date() : undefined
     }
   });
-  await createAuditLog({ actorUserId, action: "funding.application.decision", entityType: "FundingApplication", entityId: applicationId, before, after });
+  await createAuditLog({
+    actorUserId,
+    action: isClarificationRequest ? "funding.application.clarification.requested" : "funding.application.decision",
+    entityType: "FundingApplication",
+    entityId: applicationId,
+    before,
+    after,
+    metadata: clarificationReason ? { reason: clarificationReason } : undefined
+  });
   return after;
 }
 

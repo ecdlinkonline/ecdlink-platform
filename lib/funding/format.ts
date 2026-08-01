@@ -40,6 +40,7 @@ export function fundingStatusToDb(status: FundingApplicationStatus) {
     | "IN_PROGRESS"
     | "READY"
     | "SUBMITTED"
+    | "CLARIFICATION_REQUESTED"
     | "APPROVED"
     | "REJECTED";
 }
@@ -48,8 +49,9 @@ export function fundingStatusFromDb(status: string): FundingApplicationStatus {
   const label = status.toLowerCase().replaceAll("_", " ");
   const title = label.replace(/\b\w/g, (letter) => letter.toUpperCase());
   if (title === "In Progress") return "In Progress";
+  if (title === "Clarification Requested") return "Clarification Requested";
   if (["Draft", "Ready", "Submitted", "Approved", "Rejected"].includes(title)) return title as FundingApplicationStatus;
-  if (title === "Under Review" || title === "Clarification Requested") return "Submitted";
+  if (title === "Under Review") return "Submitted";
   if (title === "Withdrawn") return "Rejected";
   return "Draft";
 }

@@ -77,10 +77,18 @@ export const createFundingApplicationSchema = z.object({
 });
 
 export const applicationDecisionSchema = z.object({
-  status: z.enum(["Approved", "Rejected", "Submitted", "In Progress"]),
+  status: z.enum(["Approved", "Rejected", "Submitted", "In Progress", "Clarification Requested"]),
   approvedAmount: z.coerce.number().nonnegative().optional(),
   rejectionReason: z.string().optional(),
   notes: z.string().optional()
+}).superRefine((input, context) => {
+  if (input.status === "Clarification Requested" && !input.notes?.trim()) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["notes"],
+      message: "A clarification message is required."
+    });
+  }
 });
 
 export const createAssessmentSchema = z.object({
