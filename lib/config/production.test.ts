@@ -24,6 +24,14 @@ function validEnvironment(): Record<string, string> {
     EMAIL_REQUEST_TIMEOUT_MS: "10000",
     EMAIL_MAX_ATTEMPTS: "3",
     READINESS_CHECK_TIMEOUT_MS: "5000",
+    RATE_LIMIT_PROVIDER: "upstash",
+    RATE_LIMIT_FAIL_MODE: "closed",
+    RATE_LIMIT_IDENTIFIER_SECRET: "rate-limit-identifier-secret-for-tests",
+    UPSTASH_REDIS_REST_URL: "https://redis.example.test",
+    UPSTASH_REDIS_REST_TOKEN: "upstash-rest-token-for-tests",
+    ECDLINK_ENABLE_FALLBACK_ADMIN: "false",
+    TRUSTED_APP_ORIGINS: "https://app.example.test",
+    UPLOAD_REQUEST_MAX_BYTES: "12000000",
     ECDLINK_FALLBACK_ADMIN_EMAIL: "",
     ECDLINK_FALLBACK_ADMIN_PASSWORD: "",
   };
@@ -48,9 +56,15 @@ test("requires Resend sender and API key only when Resend is enabled", () => {
   if (!result.valid) assert.deepEqual(new Set(result.invalidFields), new Set(["RESEND_API_KEY", "EMAIL_FROM"]));
 });
 
-test("requires fallback administrator credentials as a pair", () => {
-  const result = validateProductionEnvironment({ ...validEnvironment(), ECDLINK_FALLBACK_ADMIN_EMAIL: "admin@example.test" });
+test("rejects fallback credentials unless emergency access is explicitly enabled", () => {
+  const result = validateProductionEnvironment({ ...validEnvironment(), ECDLINK_FALLBACK_ADMIN_EMAIL: "admin@example.test", ECDLINK_FALLBACK_ADMIN_PASSWORD: "a-strong-fallback-password" });
   assert.equal(result.valid, false);
+});
+
+test("requires a shared fail-closed production rate-limit provider", () => {
+  const result = validateProductionEnvironment({ ...validEnvironment(), RATE_LIMIT_PROVIDER: "memory", RATE_LIMIT_FAIL_MODE: "open" });
+  assert.equal(result.valid, false);
+  if (!result.valid) assert.ok(result.invalidFields.includes("RATE_LIMIT_PROVIDER") && result.invalidFields.includes("RATE_LIMIT_FAIL_MODE"));
 });
 
 test("requires a bounded integer readiness timeout", () => {

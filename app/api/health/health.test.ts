@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { GET as getHealth } from "./route";
-import { createReadinessResponse } from "./ready/route";
+import { createReadinessResponse } from "@/lib/health/response";
 
 test("liveness returns a public-safe no-store response", async () => {
   const response = getHealth();

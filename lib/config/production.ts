@@ -23,6 +23,14 @@ const productionEnvironmentSchema = z.object({
   EMAIL_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().max(60_000),
   EMAIL_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(3),
   READINESS_CHECK_TIMEOUT_MS: z.coerce.number().int().min(500).max(15_000),
+  RATE_LIMIT_PROVIDER: z.enum(["memory", "upstash"]),
+  RATE_LIMIT_FAIL_MODE: z.enum(["closed", "open"]),
+  RATE_LIMIT_IDENTIFIER_SECRET: z.string().min(32),
+  UPSTASH_REDIS_REST_URL: z.string().url().optional().or(z.literal("")),
+  UPSTASH_REDIS_REST_TOKEN: z.string().min(20).optional().or(z.literal("")),
+  ECDLINK_ENABLE_FALLBACK_ADMIN: z.enum(["true", "false"]),
+  TRUSTED_APP_ORIGINS: z.string().min(1),
+  UPLOAD_REQUEST_MAX_BYTES: z.coerce.number().int().min(10_000_001).max(15_000_000),
   ECDLINK_FALLBACK_ADMIN_EMAIL: z.string().email().optional().or(z.literal("")),
   ECDLINK_FALLBACK_ADMIN_PASSWORD: z.string().min(16).optional().or(z.literal("")),
 }).superRefine((value, context) => {
@@ -32,7 +40,18 @@ const productionEnvironmentSchema = z.object({
   }
   const fallbackEmail = Boolean(value.ECDLINK_FALLBACK_ADMIN_EMAIL);
   const fallbackPassword = Boolean(value.ECDLINK_FALLBACK_ADMIN_PASSWORD);
-  if (fallbackEmail !== fallbackPassword) context.addIssue({ code: "custom", path: ["ECDLINK_FALLBACK_ADMIN_EMAIL"], message: "Fallback credentials must be configured together." });
+  if (value.ECDLINK_ENABLE_FALLBACK_ADMIN === "true" && (!fallbackEmail || !fallbackPassword)) context.addIssue({ code: "custom", path: ["ECDLINK_FALLBACK_ADMIN_EMAIL"], message: "Enabled fallback access requires both credentials." });
+  if (value.ECDLINK_ENABLE_FALLBACK_ADMIN === "false" && (fallbackEmail || fallbackPassword)) context.addIssue({ code: "custom", path: ["ECDLINK_FALLBACK_ADMIN_EMAIL"], message: "Disabled fallback access must not retain credentials." });
+  if (value.RATE_LIMIT_PROVIDER !== "upstash") context.addIssue({ code: "custom", path: ["RATE_LIMIT_PROVIDER"], message: "Production requires a shared rate-limit provider." });
+  if (value.RATE_LIMIT_FAIL_MODE !== "closed") context.addIssue({ code: "custom", path: ["RATE_LIMIT_FAIL_MODE"], message: "Production rate limiting must fail closed." });
+  let upstashHttps = false;
+  try { upstashHttps = Boolean(value.UPSTASH_REDIS_REST_URL && new URL(value.UPSTASH_REDIS_REST_URL).protocol === "https:"); } catch { upstashHttps = false; }
+  if (!upstashHttps) context.addIssue({ code: "custom", path: ["UPSTASH_REDIS_REST_URL"], message: "Upstash requires an HTTPS REST URL." });
+  if (!value.UPSTASH_REDIS_REST_TOKEN) context.addIssue({ code: "custom", path: ["UPSTASH_REDIS_REST_TOKEN"], message: "Upstash requires a REST token." });
+  for (const origin of value.TRUSTED_APP_ORIGINS.split(",").map((item) => item.trim())) {
+    try { const url = new URL(origin); if (url.protocol !== "https:" || ["localhost", "127.0.0.1"].includes(url.hostname)) throw new Error(); }
+    catch { context.addIssue({ code: "custom", path: ["TRUSTED_APP_ORIGINS"], message: "Trusted production origins must be HTTPS origins." }); break; }
+  }
 });
 
 export type ProductionConfiguration = z.infer<typeof productionEnvironmentSchema>;

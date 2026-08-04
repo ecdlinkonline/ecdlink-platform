@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { Webhook } from "svix";
 import { archiveUserFromClerk, upsertUserFromClerk } from "@/lib/repositories/users";
 import { prisma } from "@/lib/db/prisma";
+import { enforceRateLimit } from "@/lib/api/security";
+import { requestIp } from "@/lib/security/request-identity";
 
 type ClerkWebhookPayload = {
   type: string;
@@ -54,12 +56,14 @@ async function verifyPayload(request: Request) {
 }
 
 export async function POST(request: Request) {
+  const rateError = await enforceRateLimit("clerk_webhook", requestIp(request));
+  if (rateError) return rateError;
   let payload: ClerkWebhookPayload;
 
   try {
     payload = await verifyPayload(request);
-  } catch (error) {
-    return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "Invalid webhook signature." }, { status: 400 });
+  } catch {
+    return NextResponse.json({ ok: false, error: "Invalid webhook signature." }, { status: 400 });
   }
 
   if (["user.created", "user.updated", "email.updated"].includes(payload.type)) {

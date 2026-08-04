@@ -1,9 +1,7 @@
 import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import type { UserRole } from "@/lib/auth/roles";
-
-const fallbackAdminEmail = process.env.ECDLINK_FALLBACK_ADMIN_EMAIL;
-const fallbackAdminPassword = process.env.ECDLINK_FALLBACK_ADMIN_PASSWORD;
+import { authorizeFallbackAdmin } from "@/lib/security/fallback-auth";
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   session: {
@@ -19,15 +17,10 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         email: { label: "Email", type: "email" },
         password: { label: "Password", type: "password" }
       },
-      async authorize(credentials) {
+      async authorize(credentials, request) {
         const email = String(credentials?.email ?? "").toLowerCase();
         const password = String(credentials?.password ?? "");
-
-        if (!fallbackAdminEmail || !fallbackAdminPassword) {
-          return null;
-        }
-
-        if (email === fallbackAdminEmail.toLowerCase() && password === fallbackAdminPassword) {
+        if (await authorizeFallbackAdmin({ email, password, request })) {
           return {
             id: "fallback-super-admin",
             name: "ECDLink Fallback Admin",

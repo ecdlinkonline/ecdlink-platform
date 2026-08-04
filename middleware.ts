@@ -1,17 +1,12 @@
-import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
-
-const isProtectedRoute = createRouteMatcher([
-  "/dashboard(.*)",
-  "/ecdlink(.*)",
-  "/admin(.*)",
-  "/supplier(.*)",
-  "/donor(.*)",
-  "/funding(.*)",
-  "/api((?!/auth(?:/|$)|/clerk/webhook(?:/|$)|/health(?:/|$)).*)"
-]);
+import { clerkMiddleware } from "@clerk/nextjs/server";
+import { NextResponse } from "next/server";
+import { requiresAuthentication } from "@/lib/security/route-access";
 
 export default clerkMiddleware(async (auth, request) => {
-  if (isProtectedRoute(request)) {
+  if (request.nextUrl.pathname === "/auth/fallback" && process.env.ECDLINK_ENABLE_FALLBACK_ADMIN !== "true") {
+    return new NextResponse(null, { status: 404 });
+  }
+  if (requiresAuthentication(request.nextUrl.pathname)) {
     await auth.protect();
   }
 });

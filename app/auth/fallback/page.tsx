@@ -1,9 +1,12 @@
 import Link from "next/link";
+import { notFound } from "next/navigation";
 import { AuthCard } from "@/components/auth/auth-card";
 import { AuthShell } from "@/components/auth/auth-shell";
 import { NextAuthFallbackForm } from "@/components/auth/next-auth-fallback-form";
+import { fallbackAdminEnabled } from "@/lib/security/fallback-auth";
 
 export default function FallbackAuthPage() {
+  if (!fallbackAdminEnabled()) notFound();
   return (
     <AuthShell
       eyebrow="Fallback access"
