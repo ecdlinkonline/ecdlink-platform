@@ -13,11 +13,14 @@
     "db:seed": "prisma db seed",
     "db:studio": "prisma studio",
     "db:reset": "prisma migrate reset",
-    "db:health": "tsx scripts/db-health.ts"
+    "db:health": "tsx scripts/db-health.ts",
+    "test:storage": "tsx --conditions=react-server --test lib/storage/path.test.ts lib/storage/validation.test.ts lib/storage/storage-service.test.ts",
+    "storage:verify": "tsx --conditions=react-server --env-file-if-exists=.env --env-file-if-exists=.env.local scripts/storage/verify-supabase.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.14.0",
     "@clerk/nextjs": "^6.32.0",
+    "@supabase/supabase-js": "^2.112.0",
     "framer-motion": "^11.15.0",
     "next": "^15.0.0",
     "next-auth": "5.0.0-beta.30",
