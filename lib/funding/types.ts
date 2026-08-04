@@ -166,3 +166,69 @@ export type FundingReport = {
   funderTypeBreakdown: Array<{ label: string; value: number }>;
   regionalReadiness: Array<{ label: string; value: number }>;
 };
+
+export type FundingPartnerAccess = {
+  actorUserId: string;
+  fundingOrganisationIds: string[];
+};
+
+export type FundingPartnerApplicationRecord = {
+  id: string;
+  applicationNumber: string;
+  centreId: string;
+  centreName: string;
+  projectTitle: string;
+  fundingOpportunity: string | null;
+  status: FundingApplicationStatus;
+  requestedAmount: number;
+  approvedAmount: number | null;
+  submittedAt: string | null;
+  decisionDate: string | null;
+  reviewedByUserId: string | null;
+  updatedAt: string;
+};
+
+export type FundingPartnerCallRecord = {
+  id: string;
+  title: string;
+  type: string | null;
+  status: string;
+  closesAt: string | null;
+  applicationCount: number;
+};
+
+export type FundingPartnerAssessmentRecord = {
+  id: string;
+  applicationId: string | null;
+  applicationNumber: string | null;
+  centreName: string | null;
+  status: string;
+  score: number | null;
+  updatedAt: string;
+};
+
+export type FundingPartnerPortalData = {
+  organisationNames: string[];
+  metrics: {
+    fundingCalls: number;
+    assignedApplications: number;
+    awaitingReview: number;
+    approvals: number;
+  };
+  reports: {
+    assignedApplications: number;
+    awaitingReview: number;
+    clarificationRequests: number;
+    approvalRate: number;
+    averageDecisionDays: number;
+    fundingCommitted: number;
+  };
+  myWork: {
+    assignedToMe: FundingPartnerApplicationRecord[];
+    awaitingReview: FundingPartnerApplicationRecord[];
+    clarificationRequests: FundingPartnerApplicationRecord[];
+  };
+  applications: FundingPartnerApplicationRecord[];
+  calls: FundingPartnerCallRecord[];
+  assessments: FundingPartnerAssessmentRecord[];
+};

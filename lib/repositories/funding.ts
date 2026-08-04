@@ -545,8 +545,10 @@ export async function getFundingReadinessByCentreIdFromDb(centreId: string) {
   return profile ? mapProfile(profile as FundingProfileWithRelations) : null;
 }
 
-export async function getFundingReviewWorkspaceFromDb(centreId: string, access: { actorUserId: string; superAdmin: boolean; fundingOrganisationIds: string[] }): Promise<FundingReviewWorkspaceData | null> {
-  const applicationWhere: Prisma.FundingApplicationWhereInput | undefined = access.superAdmin ? undefined : { fundingOrganisationId: { in: access.fundingOrganisationIds } };
+export async function getFundingReviewWorkspaceFromDb(centreId: string, access: { actorUserId: string; superAdmin: boolean; fundingOrganisationIds: string[]; applicationId?: string }): Promise<FundingReviewWorkspaceData | null> {
+  const applicationWhere: Prisma.FundingApplicationWhereInput | undefined = access.applicationId
+    ? { id: access.applicationId, ...(access.superAdmin ? {} : { fundingOrganisationId: { in: access.fundingOrganisationIds } }) }
+    : access.superAdmin ? undefined : { fundingOrganisationId: { in: access.fundingOrganisationIds } };
   const workspaceRelations = {
     ...fundingProfileRelations,
     projects: {
@@ -597,6 +599,19 @@ export async function getFundingReviewWorkspaceFromDb(centreId: string, access: 
     label: [reviewer.firstName, reviewer.lastName].filter(Boolean).join(" ") || reviewer.email || "Unnamed reviewer",
   }));
   return mapFundingReviewWorkspace(typedProfile, reviewers, documentAuditEvents, notes, communications, collaborationAudits, access.actorUserId, access.superAdmin);
+}
+
+export async function getFundingPartnerReviewWorkspaceByApplicationIdFromDb(applicationId: string, access: { actorUserId: string; fundingOrganisationIds: string[] }): Promise<FundingReviewWorkspaceData | null> {
+  const application = await prisma.fundingApplication.findFirst({
+    where: { id: applicationId, fundingOrganisationId: { in: access.fundingOrganisationIds } },
+    select: { project: { select: { profile: { select: { centreId: true } } } } },
+  });
+  if (!application) return null;
+  return getFundingReviewWorkspaceFromDb(application.project.profile.centreId, {
+    ...access,
+    superAdmin: false,
+    applicationId,
+  });
 }
 
 export async function getFundingReportsFromDb(): Promise<FundingReport> {

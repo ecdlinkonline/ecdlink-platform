@@ -270,18 +270,13 @@ export const roleDashboardConfig: Record<UserRole, RoleDashboardConfig> = {
     navigation: [
       { title: "Dashboard", href: "/dashboard/funding-partner", icon: LayoutDashboard },
       { title: "Funding Calls", href: "/dashboard/funding-partner/funding-calls", icon: HandCoins },
-      { title: "Applications", href: "/dashboard/funding-partner/applications", icon: FileText, badge: "38" },
+      { title: "Applications", href: "/dashboard/funding-partner/applications", icon: FileText },
       { title: "Assessments", href: "/dashboard/funding-partner/assessments", icon: ClipboardCheck, permission: "assessments:manage" },
       { title: "Approvals", href: "/dashboard/funding-partner/approvals", icon: FileCheck2 },
       { title: "Assistant", href: "/dashboard/funding-partner/intelligence", icon: Lightbulb, permission: "intelligence:read" },
       { title: "Reports", href: "/dashboard/funding-partner/reports", icon: BarChart3, permission: "reports:read" }
     ],
-    cards: [
-      { title: "Funding Calls", value: "5", description: "Open programmes", icon: HandCoins, href: "/dashboard/funding-partner/funding-calls" },
-      { title: "Applications", value: "38", description: "Centre submissions", icon: FileText, href: "/dashboard/funding-partner/applications" },
-      { title: "Assessments", value: "11", description: "Under review", icon: ClipboardCheck, href: "/dashboard/funding-partner/assessments" },
-      { title: "Approvals", value: "7", description: "Approved projects", icon: FileCheck2, href: "/dashboard/funding-partner/approvals" }
-    ]
+    cards: []
   }
 };
 
