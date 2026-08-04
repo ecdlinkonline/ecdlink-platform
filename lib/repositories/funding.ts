@@ -134,7 +134,7 @@ type FundingProfileWithRelations = {
     }>;
   }>;
   checklistItems?: Array<{ id: string; label: string; status: string; note: string | null; category: string; required: boolean; completedAt: Date | null }>;
-  supportingDocuments?: Array<{ id: string; label: string; documentType: string; status: string; note: string | null; fileId: string | null; uploadedAt: Date | null; verifiedAt: Date | null; updatedAt: Date }>;
+  supportingDocuments?: Array<{ id: string; label: string; documentType: string; status: string; note: string | null; fileId: string | null; uploadedAt: Date | null; verifiedAt: Date | null; updatedAt: Date; file: { id: string; originalFilename: string; mimeType: string; fileSize: number } | null }>;
   reminders?: Array<{ id: string; title: string; body: string; dueAt: Date | null; status: string; createdAt: Date }>;
 };
 
@@ -157,7 +157,14 @@ function getCurrentFundingApplication(profile: FundingProfileWithRelations): Cur
   return current;
 }
 
-export function buildFundingTimeline(profile: FundingProfileWithRelations): FundingReviewTimelineItem[] {
+export type FundingDocumentAuditEvent = {
+  id: string;
+  action: string;
+  entityId: string | null;
+  createdAt: Date;
+};
+
+export function buildFundingTimeline(profile: FundingProfileWithRelations, documentAuditEvents: FundingDocumentAuditEvent[] = []): FundingReviewTimelineItem[] {
   const timeline: FundingReviewTimelineItem[] = [
     {
       id: `profile-${profile.id}-updated`,
@@ -227,8 +234,28 @@ export function buildFundingTimeline(profile: FundingProfileWithRelations): Fund
     }
   }
 
+  const documentsById = new Map((profile.supportingDocuments ?? []).map((document) => [document.id, document]));
+  const auditedActions = new Set(documentAuditEvents.map((event) => `${event.entityId}:${event.action}`));
+  for (const event of documentAuditEvents) {
+    const document = event.entityId ? documentsById.get(event.entityId) : undefined;
+    if (!document) continue;
+    const eventDetails = event.action === "funding.document.uploaded"
+      ? { title: "Supporting document uploaded", status: "COMPLETE" }
+      : event.action === "funding.document.verified"
+        ? { title: "Supporting document verified", status: "COMPLETE" }
+        : { title: "Document resubmission requested", status: "IN_PROGRESS" };
+    timeline.push({
+      id: `audit-${event.id}`,
+      type: "document",
+      title: eventDetails.title,
+      description: document.label,
+      status: eventDetails.status,
+      occurredAt: event.createdAt.toISOString(),
+    });
+  }
+
   for (const document of profile.supportingDocuments ?? []) {
-    if (document.uploadedAt) {
+    if (document.uploadedAt && !auditedActions.has(`${document.id}:funding.document.uploaded`)) {
       timeline.push({
         id: `document-${document.id}-uploaded`,
         type: "document",
@@ -238,7 +265,7 @@ export function buildFundingTimeline(profile: FundingProfileWithRelations): Fund
         occurredAt: document.uploadedAt.toISOString(),
       });
     }
-    if (document.verifiedAt) {
+    if (document.verifiedAt && !auditedActions.has(`${document.id}:funding.document.verified`)) {
       timeline.push({
         id: `document-${document.id}-verified`,
         type: "document",
@@ -351,7 +378,7 @@ function mapProfile(profile: FundingProfileWithRelations): FundingReadinessLiveR
   };
 }
 
-function mapFundingReviewWorkspace(profile: FundingProfileWithRelations, reviewers: FundingReviewerOption[]): FundingReviewWorkspaceData {
+function mapFundingReviewWorkspace(profile: FundingProfileWithRelations, reviewers: FundingReviewerOption[], documentAuditEvents: FundingDocumentAuditEvent[]): FundingReviewWorkspaceData {
   const summary = mapProfile(profile);
   const currentApplication = getCurrentFundingApplication(profile);
   const applications = (profile.projects ?? []).flatMap((project) =>
@@ -410,6 +437,9 @@ function mapFundingReviewWorkspace(profile: FundingProfileWithRelations, reviewe
       status: document.status,
       note: document.note,
       fileId: document.fileId,
+      originalFilename: document.file?.originalFilename ?? null,
+      mimeType: document.file?.mimeType ?? null,
+      fileSize: document.file?.fileSize ?? null,
       uploadedAt: document.uploadedAt?.toISOString() ?? null,
       verifiedAt: document.verifiedAt?.toISOString() ?? null,
       updatedAt: document.updatedAt.toISOString(),
@@ -422,7 +452,7 @@ function mapFundingReviewWorkspace(profile: FundingProfileWithRelations, reviewe
       dueAt: reminder.dueAt?.toISOString() ?? null,
       createdAt: reminder.createdAt.toISOString(),
     })),
-    timeline: buildFundingTimeline(profile),
+    timeline: buildFundingTimeline(profile, documentAuditEvents),
     reviewers,
   };
 }
@@ -474,7 +504,7 @@ const fundingProfileRelations = {
     }
   },
   checklistItems: { orderBy: { displayOrder: "asc" }, select: { id: true, label: true, status: true, note: true, category: true, required: true, completedAt: true } },
-  supportingDocuments: { orderBy: { createdAt: "asc" }, select: { id: true, label: true, documentType: true, status: true, note: true, fileId: true, uploadedAt: true, verifiedAt: true, updatedAt: true } },
+  supportingDocuments: { orderBy: { createdAt: "asc" }, select: { id: true, label: true, documentType: true, status: true, note: true, fileId: true, uploadedAt: true, verifiedAt: true, updatedAt: true, file: { select: { id: true, originalFilename: true, mimeType: true, fileSize: true } } } },
   reminders: { orderBy: { createdAt: "desc" }, take: 5, select: { id: true, title: true, body: true, dueAt: true, status: true, createdAt: true } }
 } satisfies Prisma.FundingProfileInclude;
 
@@ -522,11 +552,22 @@ export async function getFundingReviewWorkspaceFromDb(centreId: string): Promise
       orderBy: [{ firstName: "asc" }, { lastName: "asc" }, { email: "asc" }],
     }),
   ]);
+  if (!profile) return null;
+  const documentIds = profile.supportingDocuments.map((document) => document.id);
+  const documentAuditEvents = documentIds.length ? await prisma.auditLog.findMany({
+    where: {
+      entityType: "FundingSupportingDocument",
+      entityId: { in: documentIds },
+      action: { in: ["funding.document.uploaded", "funding.document.verified", "funding.document.resubmission.requested"] },
+    },
+    select: { id: true, action: true, entityId: true, createdAt: true },
+    orderBy: { createdAt: "desc" },
+  }) : [];
   const reviewers = reviewerUsers.map((reviewer) => ({
     value: reviewer.id,
     label: [reviewer.firstName, reviewer.lastName].filter(Boolean).join(" ") || reviewer.email || "Unnamed reviewer",
   }));
-  return profile ? mapFundingReviewWorkspace(profile as FundingProfileWithRelations, reviewers) : null;
+  return mapFundingReviewWorkspace(profile as FundingProfileWithRelations, reviewers, documentAuditEvents);
 }
 
 export async function getFundingReportsFromDb(): Promise<FundingReport> {

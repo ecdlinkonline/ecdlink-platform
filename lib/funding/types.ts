@@ -98,6 +98,9 @@ export type FundingReviewDocument = {
   status: string;
   note: string | null;
   fileId: string | null;
+  originalFilename: string | null;
+  mimeType: string | null;
+  fileSize: number | null;
   uploadedAt: string | null;
   verifiedAt: string | null;
   updatedAt: string;

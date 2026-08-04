@@ -11,6 +11,7 @@ import { RequestClarificationDialog } from "@/components/funding/request-clarifi
 import { ApproveApplicationDialog } from "@/components/funding/approve-application-dialog";
 import { AssignReviewerDialog } from "@/components/funding/assign-reviewer-dialog";
 import { RejectApplicationDialog } from "@/components/funding/reject-application-dialog";
+import { FundingDocumentActions } from "@/components/funding/funding-document-actions";
 import { formatFundingCurrency } from "@/lib/funding/format";
 import type { FundingReviewWorkspaceData } from "@/lib/funding/types";
 
@@ -32,6 +33,11 @@ function formatDate(value: string | null) {
 
 function EmptyState({ children }: { children: string }) {
   return <div className="rounded-lg border border-dashed border-brand-line p-8 text-center text-sm text-slate-500 dark:border-slate-800 dark:text-slate-400">{children}</div>;
+}
+
+function formatFileSize(value: number | null) {
+  if (value == null) return "—";
+  return value < 1_000_000 ? `${Math.max(1, Math.round(value / 1000))} KB` : `${(value / 1_000_000).toFixed(1)} MB`;
 }
 
 export function FundingReviewWorkspace({ data }: { data: FundingReviewWorkspaceData }) {
@@ -146,7 +152,7 @@ export function FundingReviewWorkspace({ data }: { data: FundingReviewWorkspaceD
       {activeTab === "documents" ? (
         <Card className="dark:border-slate-800 dark:bg-slate-900">
           <CardHeader><CardTitle className="dark:text-white">Supporting documents</CardTitle><CardDescription className="dark:text-slate-400">Documents attached to the funding-readiness profile.</CardDescription></CardHeader>
-          <CardContent>{data.supportingDocuments.length ? <DataTable columns={["Document", "Type", "Status", "Uploaded", "Verified", "Note"]} rows={data.supportingDocuments.map((document) => [document.label, document.documentType, <StatusBadge key="status" status={document.status} />, formatDate(document.uploadedAt), formatDate(document.verifiedAt), document.note ?? "—"])} /> : <EmptyState>No supporting documents exist for this centre.</EmptyState>}</CardContent>
+          <CardContent>{data.supportingDocuments.length ? <DataTable columns={["Document", "Type", "Status", "File", "File type / size", "Uploaded", "Verified", "Note", "Actions"]} rows={data.supportingDocuments.map((document) => [document.label, document.documentType, <StatusBadge key="status" status={document.status} />, document.originalFilename ?? "Not uploaded", document.mimeType ? `${document.mimeType} · ${formatFileSize(document.fileSize)}` : "—", formatDate(document.uploadedAt), formatDate(document.verifiedAt), document.note ?? "—", <FundingDocumentActions key="actions" document={document} canManage />])} /> : <EmptyState>No supporting documents exist for this centre.</EmptyState>}</CardContent>
         </Card>
       ) : null}
 

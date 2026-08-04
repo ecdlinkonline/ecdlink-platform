@@ -121,6 +121,20 @@ export const applicationDecisionSchema = z.object({
   }
 });
 
+const optionalFundingDocumentComment = z.string().trim().max(2000).optional().transform((value) => value || undefined);
+
+export const fundingDocumentActionSchema = z.discriminatedUnion("action", [
+  z.object({
+    action: z.literal("verify"),
+    reviewerComment: optionalFundingDocumentComment,
+  }),
+  z.object({
+    action: z.literal("request_resubmission"),
+    rejectionReason: z.string().trim().min(3).max(2000),
+    reviewerComment: optionalFundingDocumentComment,
+  }),
+]);
+
 export const createAssessmentSchema = z.object({
   fundingApplicationId: z.string().min(1).optional(),
   fundingCallId: z.string().min(1),
