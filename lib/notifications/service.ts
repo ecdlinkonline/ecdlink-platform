@@ -1,8 +1,8 @@
 import { prisma } from "@/lib/db/prisma";
 import { buildFundingNotifications } from "./builders";
-import { createNotifications } from "./repository";
-import { DEFAULT_NOTIFICATION_PREFERENCE, getPreferenceMap, includesInAppDelivery } from "./preferences";
+import { DEFAULT_NOTIFICATION_PREFERENCE, getPreferenceMap } from "./preferences";
 import type { FundingNotificationEvent } from "./types";
+import { persistAndScheduleNotificationEmail } from "@/lib/email";
 
 export async function publishFundingNotification(event: FundingNotificationEvent) {
   try {
@@ -52,8 +52,10 @@ export async function publishFundingNotification(event: FundingNotificationEvent
 }
 
 async function deliver(event: FundingNotificationEvent, recipientUserIds: string[], centreId: string, centreName: string) {
-  const activeRecipients = await prisma.user.findMany({ where: { id: { in: [...new Set(recipientUserIds)] }, status: "ACTIVE" }, select: { id: true } });
+  const activeRecipients = await prisma.user.findMany({ where: { id: { in: [...new Set(recipientUserIds)] }, status: "ACTIVE" }, select: { id: true, email: true } });
   const preferences = await getPreferenceMap(activeRecipients.map((user) => user.id), event.type);
-  const eligible = activeRecipients.filter((user) => includesInAppDelivery(preferences.get(user.id) ?? DEFAULT_NOTIFICATION_PREFERENCE)).map((user) => user.id);
-  return createNotifications(buildFundingNotifications(event, { recipientUserIds: eligible, centreId, centreName, ...( "applicationId" in event ? { applicationId: event.applicationId } : { documentId: event.documentId }) }));
+  const recipients = new Map(activeRecipients.map((user) => [user.id, user]));
+  const drafts = buildFundingNotifications(event, { recipientUserIds: activeRecipients.map((user) => user.id), centreId, centreName, ...( "applicationId" in event ? { applicationId: event.applicationId } : { documentId: event.documentId }) });
+  const results = await Promise.allSettled(drafts.map((draft) => { const user = recipients.get(draft.recipientUserId)!; return persistAndScheduleNotificationEmail({ draft, email: user.email, preference: preferences.get(user.id) ?? DEFAULT_NOTIFICATION_PREFERENCE }); }));
+  return { count: results.filter((result) => result.status === "fulfilled" && result.value).length };
 }

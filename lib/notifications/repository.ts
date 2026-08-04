@@ -11,6 +11,7 @@ export async function listNotificationsForUser(userId: string, filters: Notifica
   const limit = Math.min(Math.max(filters.limit ?? 20, 1), 100);
   const where: Prisma.NotificationWhereInput = {
     recipientUserId: userId,
+    inAppVisible: true,
     module: filters.module,
     type: filters.type,
     readAt: filters.read === "READ" ? { not: null } : filters.read === "UNREAD" ? null : undefined,
@@ -20,7 +21,7 @@ export async function listNotificationsForUser(userId: string, filters: Notifica
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     take: limit + 1,
     ...(filters.cursor ? { cursor: { id: filters.cursor }, skip: 1 } : {}),
-    select: { id: true, module: true, type: true, title: true, body: true, href: true, metadata: true, readAt: true, createdAt: true },
+    select: { id: true, module: true, type: true, title: true, body: true, href: true, metadata: true, readAt: true, createdAt: true, emailDelivery: { select: { status: true } } },
   });
   const hasMore = items.length > limit;
   const page = hasMore ? items.slice(0, limit) : items;
@@ -28,14 +29,14 @@ export async function listNotificationsForUser(userId: string, filters: Notifica
 }
 
 export function countUnreadNotificationsForUser(userId: string) {
-  return prisma.notification.count({ where: { recipientUserId: userId, readAt: null } });
+  return prisma.notification.count({ where: { recipientUserId: userId, inAppVisible: true, readAt: null } });
 }
 
 export async function setNotificationReadState(userId: string, notificationId: string, read: boolean) {
-  const result = await prisma.notification.updateMany({ where: { id: notificationId, recipientUserId: userId }, data: { readAt: read ? new Date() : null } });
+  const result = await prisma.notification.updateMany({ where: { id: notificationId, recipientUserId: userId, inAppVisible: true }, data: { readAt: read ? new Date() : null } });
   return result.count === 1;
 }
 
 export function markAllNotificationsRead(userId: string, filters: { module?: NotificationModule; type?: NotificationType } = {}) {
-  return prisma.notification.updateMany({ where: { recipientUserId: userId, readAt: null, module: filters.module, type: filters.type }, data: { readAt: new Date() } });
+  return prisma.notification.updateMany({ where: { recipientUserId: userId, inAppVisible: true, readAt: null, module: filters.module, type: filters.type }, data: { readAt: new Date() } });
 }

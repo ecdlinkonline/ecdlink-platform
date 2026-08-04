@@ -1,0 +1,5 @@
+import { escapeHtml } from "./escape";
+export function emailLayout(input: { heading: string; body: string; url?: string }) {
+  const heading = escapeHtml(input.heading), body = escapeHtml(input.body), url = input.url ? escapeHtml(input.url) : undefined;
+  return { html: `<!doctype html><html><body style="margin:0;background:#f5f7fb;font-family:Arial,sans-serif;color:#172033"><table role="presentation" width="100%"><tr><td align="center" style="padding:32px"><table role="presentation" width="600" style="max-width:100%;background:#fff;border-radius:12px"><tr><td style="padding:32px"><h1 style="font-size:22px">${heading}</h1><p style="font-size:15px;line-height:1.6">${body}</p>${url ? `<p><a href="${url}" style="color:#173f7a;font-weight:bold">View in ECDLink</a></p>` : ""}<p style="color:#64748b;font-size:12px">ECDLink platform notification</p></td></tr></table></td></tr></table></body></html>`, text: `${input.heading}\n\n${input.body}${input.url ? `\n\nView in ECDLink: ${input.url}` : ""}\n\nECDLink platform notification` };
+}

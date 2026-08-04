@@ -18,6 +18,7 @@
     "test:funding-documents": "tsx --conditions=react-server --test lib/services/funding-documents.test.ts lib/repositories/funding-timeline.test.ts",
     "test:notifications": "tsx --conditions=react-server --test lib/notifications/builders.test.ts lib/notifications/preferences.test.ts",
     "test:funding-communication": "tsx --conditions=react-server --test lib/services/funding-communication.test.ts",
+    "test:email": "tsx --conditions=react-server --test lib/email/email.test.ts",
     "storage:verify": "tsx --conditions=react-server --env-file-if-exists=.env --env-file-if-exists=.env.local scripts/storage/verify-supabase.ts"
   },
   "dependencies": {

@@ -65,6 +65,18 @@ enum FundingCommunicationType {
   EMAIL
 }
 
+enum EmailStatus {
+  PENDING
+  SENT
+  FAILED
+  SKIPPED
+}
+
+enum EmailProviderName {
+  NOOP
+  RESEND
+}
+
 enum EcdlinkStaffDepartment {
   OPERATIONS
   CENTRE_SUPPORT
@@ -1811,16 +1823,36 @@ model Notification {
   body            String
   href             String?
   metadata         Json?
+  inAppVisible     Boolean            @default(true)
   readAt           DateTime?
   createdAt        DateTime           @default(now())
   recipient        User?              @relation("ReceivedNotifications", fields: [recipientUserId], references: [id], onDelete: Cascade)
   actor            User?              @relation("CreatedNotifications", fields: [actorUserId], references: [id], onDelete: SetNull)
   centre           EcdCentre?         @relation(fields: [centreId], references: [id])
+  emailDelivery    EmailDeliveryLog?
 
   @@index([recipientUserId, readAt, createdAt])
   @@index([recipientUserId, module, createdAt])
   @@index([recipientUserId, type, createdAt])
   @@index([centreId, createdAt])
+}
+
+model EmailDeliveryLog {
+  id                String            @id @default(cuid())
+  notificationId    String            @unique
+  recipient         String
+  provider          EmailProviderName
+  status            EmailStatus       @default(PENDING)
+  attempts          Int               @default(0)
+  providerMessageId String?
+  error             String?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  sentAt            DateTime?
+  notification      Notification       @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+
+  @@index([status, createdAt])
+  @@index([recipient, createdAt])
 }
 
 model NotificationPreference {
