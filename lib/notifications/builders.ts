@@ -10,6 +10,7 @@ const copy = {
   FUNDING_APPLICATION_REVIEWER_ASSIGNED: ["Funding review assigned", "You have been assigned to review a funding application."],
   FUNDING_DOCUMENT_RESUBMISSION_REQUESTED: ["Document resubmission requested", "A funding document needs to be resubmitted."],
   FUNDING_DOCUMENT_VERIFIED: ["Funding document verified", "A funding document has been verified."],
+  FUNDING_MANUAL_COMMUNICATION: ["Funding update", "A new funding communication is available."],
 } as const;
 
 export function buildFundingNotifications(event: FundingNotificationEvent, context: FundingContext): NotificationDraft[] {

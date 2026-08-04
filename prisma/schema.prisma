@@ -44,6 +44,7 @@ enum NotificationType {
   FUNDING_APPLICATION_REVIEWER_ASSIGNED
   FUNDING_DOCUMENT_RESUBMISSION_REQUESTED
   FUNDING_DOCUMENT_VERIFIED
+  FUNDING_MANUAL_COMMUNICATION
   PLATFORM_GENERAL
 }
 
@@ -52,6 +53,16 @@ enum NotificationDeliveryPreference {
   IN_APP
   BOTH
   NONE
+}
+
+enum FundingCommunicationType {
+  CLARIFICATION_REQUESTED
+  APPLICATION_APPROVED
+  APPLICATION_REJECTED
+  DOCUMENT_VERIFIED
+  DOCUMENT_RESUBMISSION
+  MANUAL
+  EMAIL
 }
 
 enum EcdlinkStaffDepartment {
@@ -368,6 +379,9 @@ model User {
   receivedNotifications       Notification[]                 @relation("ReceivedNotifications")
   createdNotifications        Notification[]                 @relation("CreatedNotifications")
   notificationPreferences     NotificationPreference[]
+  fundingReviewerNotes        FundingReviewerNote[]           @relation("FundingReviewerNotes")
+  fundingCommunicationsAuthored FundingCommunication[]         @relation("FundingCommunicationsAuthored")
+  fundingCommunicationsReceived FundingCommunication[]         @relation("FundingCommunicationsReceived")
   sentMessages                Message[]                      @relation("SentMessages")
   membershipPayments          MembershipPayment[]
   intelligenceQueries         IntelligenceQuery[]
@@ -781,9 +795,46 @@ model FundingApplication {
   fundingOrganisation        FundingOrganisation?     @relation(fields: [fundingOrganisationId], references: [id])
   assessments                FundingAssessment[]
   reminders                  FundingReminder[]
+  reviewerNotes              FundingReviewerNote[]
+  communications             FundingCommunication[]
 
   @@index([status, submittedAt])
   @@index([fundingCallId])
+}
+
+model FundingReviewerNote {
+  id            String   @id @default(cuid())
+  applicationId String
+  authorUserId  String
+  body          String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  deletedAt     DateTime?
+  application   FundingApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  author        User @relation("FundingReviewerNotes", fields: [authorUserId], references: [id], onDelete: Restrict)
+
+  @@index([applicationId, deletedAt, createdAt])
+  @@index([authorUserId, createdAt])
+}
+
+model FundingCommunication {
+  id              String @id @default(cuid())
+  applicationId   String
+  type            FundingCommunicationType
+  authorUserId    String?
+  recipientUserId String?
+  title           String
+  body            String
+  metadata        Json?
+  sourceEventKey  String? @unique
+  createdAt       DateTime @default(now())
+  application     FundingApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  author          User? @relation("FundingCommunicationsAuthored", fields: [authorUserId], references: [id], onDelete: SetNull)
+  recipient       User? @relation("FundingCommunicationsReceived", fields: [recipientUserId], references: [id], onDelete: SetNull)
+
+  @@index([applicationId, createdAt])
+  @@index([recipientUserId, createdAt])
+  @@index([type, createdAt])
 }
 
 model BeneficiaryList {

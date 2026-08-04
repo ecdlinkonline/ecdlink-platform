@@ -117,12 +117,15 @@ export type FundingReviewReminder = {
 
 export type FundingReviewTimelineItem = {
   id: string;
-  type: "profile" | "application" | "project" | "document" | "reminder";
+  type: "profile" | "application" | "project" | "document" | "reminder" | "communication" | "note" | "audit";
   title: string;
   description: string;
   status: string | null;
   occurredAt: string;
 };
+
+export type FundingReviewerNoteRecord = { id: string; applicationId: string; authorUserId: string; author: string; body: string; createdAt: string; updatedAt: string; canEdit: boolean; canDelete: boolean };
+export type FundingCommunicationRecord = { id: string; applicationId: string; type: string; title: string; body: string; author: string; recipient: string; createdAt: string; metadata: unknown };
 
 export type FundingReviewerOption = {
   value: string;
@@ -139,6 +142,8 @@ export type FundingReviewWorkspaceData = {
   reminders: FundingReviewReminder[];
   timeline: FundingReviewTimelineItem[];
   reviewers: FundingReviewerOption[];
+  reviewerNotes: FundingReviewerNoteRecord[];
+  communications: FundingCommunicationRecord[];
 };
 
 export type FundingFilters = {

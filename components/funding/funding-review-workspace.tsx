@@ -12,6 +12,8 @@ import { ApproveApplicationDialog } from "@/components/funding/approve-applicati
 import { AssignReviewerDialog } from "@/components/funding/assign-reviewer-dialog";
 import { RejectApplicationDialog } from "@/components/funding/reject-application-dialog";
 import { FundingDocumentActions } from "@/components/funding/funding-document-actions";
+import { FundingReviewerNotes } from "@/components/funding/funding-reviewer-notes";
+import { FundingCommunicationHistory } from "@/components/funding/funding-communication-history";
 import { formatFundingCurrency } from "@/lib/funding/format";
 import type { FundingReviewWorkspaceData } from "@/lib/funding/types";
 
@@ -21,6 +23,8 @@ export const fundingWorkspaceTabs = [
   { id: "applications", label: "Applications" },
   { id: "projects", label: "Projects" },
   { id: "documents", label: "Documents" },
+  { id: "notes", label: "Notes" },
+  { id: "communication", label: "Communication" },
   { id: "timeline", label: "Timeline" },
 ] as const;
 
@@ -40,7 +44,7 @@ function formatFileSize(value: number | null) {
   return value < 1_000_000 ? `${Math.max(1, Math.round(value / 1000))} KB` : `${(value / 1_000_000).toFixed(1)} MB`;
 }
 
-export function FundingReviewWorkspace({ data }: { data: FundingReviewWorkspaceData }) {
+export function FundingReviewWorkspace({ data, backHref = "/dashboard/super-admin/funding" }: { data: FundingReviewWorkspaceData; backHref?: string }) {
   const [activeTab, setActiveTab] = useState<FundingWorkspaceTabId>("overview");
   const { summary } = data;
   const currentApplication = data.applications.find((application) => application.id === data.currentApplicationId) ?? null;
@@ -51,7 +55,7 @@ export function FundingReviewWorkspace({ data }: { data: FundingReviewWorkspaceD
         eyebrow="Funding Review"
         title={summary.centreName}
         description={`${summary.area}, ${summary.region} · Last updated ${formatDate(summary.lastUpdatedAt)}`}
-        actions={<Link href="/dashboard/super-admin/funding"><Button variant="secondary">Back to funding readiness</Button></Link>}
+        actions={<Link href={backHref}><Button variant="secondary">Back to funding readiness</Button></Link>}
       />
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
@@ -155,6 +159,10 @@ export function FundingReviewWorkspace({ data }: { data: FundingReviewWorkspaceD
           <CardContent>{data.supportingDocuments.length ? <DataTable columns={["Document", "Type", "Status", "File", "File type / size", "Uploaded", "Verified", "Note", "Actions"]} rows={data.supportingDocuments.map((document) => [document.label, document.documentType, <StatusBadge key="status" status={document.status} />, document.originalFilename ?? "Not uploaded", document.mimeType ? `${document.mimeType} · ${formatFileSize(document.fileSize)}` : "—", formatDate(document.uploadedAt), formatDate(document.verifiedAt), document.note ?? "—", <FundingDocumentActions key="actions" document={document} canManage />])} /> : <EmptyState>No supporting documents exist for this centre.</EmptyState>}</CardContent>
         </Card>
       ) : null}
+
+      {activeTab === "notes" ? <Card className="dark:border-slate-800 dark:bg-slate-900"><CardHeader><CardTitle className="dark:text-white">Internal reviewer notes</CardTitle><CardDescription className="dark:text-slate-400">Private collaboration for authorized funding reviewers.</CardDescription></CardHeader><CardContent><FundingReviewerNotes applicationId={data.currentApplicationId} notes={data.reviewerNotes} /></CardContent></Card> : null}
+
+      {activeTab === "communication" ? <Card className="dark:border-slate-800 dark:bg-slate-900"><CardHeader><CardTitle className="dark:text-white">Applicant communication</CardTitle><CardDescription className="dark:text-slate-400">Immutable workflow and manual communication history.</CardDescription></CardHeader><CardContent><FundingCommunicationHistory applicationId={data.currentApplicationId} communications={data.communications} /></CardContent></Card> : null}
 
       {activeTab === "timeline" ? (
         <Card className="dark:border-slate-800 dark:bg-slate-900">

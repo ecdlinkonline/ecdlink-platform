@@ -1,7 +1,7 @@
 import "server-only";
 import type { UserRole, UserStatus } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
-import { publishFundingNotification } from "@/lib/notifications";
+import { recordFundingDocumentWorkflowCommunication } from "@/lib/services/funding-communication";
 import { StorageAccessError } from "@/lib/storage/errors";
 import { storage, type UploadFileAssetInput } from "@/lib/storage/storage-service";
 import type { SafeFileAsset, SignedFileAccess, StorageAccessContext } from "@/lib/storage/types";
@@ -278,12 +278,14 @@ export const requireFundingDocumentAccess = (input: { documentId: string; actorU
 export const uploadFundingSupportingDocument = (input: { documentId: string; actorUserId: string; file: StorageUploadFile }) => defaultService.uploadFundingSupportingDocument(input);
 export const verifyFundingSupportingDocument = async (input: { documentId: string; actorUserId: string; reviewerComment?: string }) => {
   const result = await defaultService.verifyFundingSupportingDocument(input);
-  await publishFundingNotification({ type: "FUNDING_DOCUMENT_VERIFIED", documentId: input.documentId, actorUserId: input.actorUserId });
+  const audit = await prisma.auditLog.findFirst({ where: { entityType: "FundingSupportingDocument", entityId: input.documentId, action: "funding.document.verified" }, select: { id: true }, orderBy: { createdAt: "desc" } });
+  await recordFundingDocumentWorkflowCommunication({ documentId: input.documentId, actorUserId: input.actorUserId, type: "DOCUMENT_VERIFIED", title: "Funding document verified", body: input.reviewerComment?.trim() || "A supporting document has been verified.", sourceEventKey: `funding.document.verified:${input.documentId}:${audit?.id ?? "latest"}` });
   return result;
 };
 export const requestFundingDocumentResubmission = async (input: { documentId: string; actorUserId: string; rejectionReason: string; reviewerComment?: string }) => {
   const result = await defaultService.requestFundingDocumentResubmission(input);
-  await publishFundingNotification({ type: "FUNDING_DOCUMENT_RESUBMISSION_REQUESTED", documentId: input.documentId, actorUserId: input.actorUserId });
+  const audit = await prisma.auditLog.findFirst({ where: { entityType: "FundingSupportingDocument", entityId: input.documentId, action: "funding.document.resubmission.requested" }, select: { id: true }, orderBy: { createdAt: "desc" } });
+  await recordFundingDocumentWorkflowCommunication({ documentId: input.documentId, actorUserId: input.actorUserId, type: "DOCUMENT_RESUBMISSION", title: "Document resubmission requested", body: input.rejectionReason.trim(), sourceEventKey: `funding.document.resubmission.requested:${input.documentId}:${audit?.id ?? "latest"}`, metadata: input.reviewerComment ? { reviewerComment: input.reviewerComment } : undefined });
   return result;
 };
 export const getFundingDocumentPreviewAccess = (input: { documentId: string; actorUserId: string }) => defaultService.getFundingDocumentPreviewAccess(input);

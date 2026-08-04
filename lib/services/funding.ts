@@ -2,6 +2,7 @@ import { prisma } from "@/lib/db/prisma";
 import { fundingStatusToDb } from "@/lib/funding/format";
 import { createAuditLog } from "@/lib/repositories/audit-logs";
 import { publishFundingNotification } from "@/lib/notifications";
+import { recordFundingWorkflowCommunication } from "@/lib/services/funding-communication";
 import type {
   applicationDecisionSchema,
   createAssessmentSchema,
@@ -292,13 +293,9 @@ export async function decideFundingApplication(applicationId: string, input: z.i
     after,
     metadata: clarificationReason ? { reason: clarificationReason } : undefined
   });
-  if (isClarificationRequest) {
-    await publishFundingNotification({ type: "FUNDING_APPLICATION_CLARIFICATION_REQUESTED", applicationId, actorUserId });
-  } else if (input.status === "Approved") {
-    await publishFundingNotification({ type: "FUNDING_APPLICATION_APPROVED", applicationId, actorUserId });
-  } else if (input.status === "Rejected") {
-    await publishFundingNotification({ type: "FUNDING_APPLICATION_REJECTED", applicationId, actorUserId });
-  }
+  if (isClarificationRequest) await recordFundingWorkflowCommunication({ applicationId, type: "CLARIFICATION_REQUESTED", actorUserId, title: "Clarification requested", body: clarificationReason!, sourceEventKey: `funding.application.clarification.requested:${applicationId}:${after.updatedAt.toISOString()}` });
+  else if (input.status === "Approved") await recordFundingWorkflowCommunication({ applicationId, type: "APPLICATION_APPROVED", actorUserId, title: "Funding application approved", body: input.notes?.trim() || "The funding application has been approved.", sourceEventKey: `funding.application.approved:${applicationId}:${after.updatedAt.toISOString()}` });
+  else if (input.status === "Rejected") await recordFundingWorkflowCommunication({ applicationId, type: "APPLICATION_REJECTED", actorUserId, title: "Funding application rejected", body: input.rejectionReason!.trim(), sourceEventKey: `funding.application.rejected:${applicationId}:${after.updatedAt.toISOString()}` });
   return after;
 }
 

@@ -2,6 +2,7 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { fundingOpportunityTypes, fundingStatusFromDb } from "@/lib/funding/format";
 import type { FundingFilters, FundingReadinessLiveRecord, FundingReadinessRecord, FundingReport, FundingReviewerOption, FundingReviewTimelineItem, FundingReviewWorkspaceData } from "@/lib/funding/types";
+import { fundingPersonName, listCommunications, listReviewerNoteIds, listReviewerNotes, projectFundingCommunicationTimeline } from "@/lib/repositories/funding-communication";
 
 function numberValue(value: unknown) {
   if (typeof value === "number") return value;
@@ -138,13 +139,9 @@ type FundingProfileWithRelations = {
   reminders?: Array<{ id: string; title: string; body: string; dueAt: Date | null; status: string; createdAt: Date }>;
 };
 
-type CurrentFundingApplication = {
-  application: NonNullable<NonNullable<FundingProfileWithRelations["projects"]>[number]["applications"]>[number];
-  project: NonNullable<FundingProfileWithRelations["projects"]>[number];
-};
-
-function getCurrentFundingApplication(profile: FundingProfileWithRelations): CurrentFundingApplication | null {
-  let current: CurrentFundingApplication | null = null;
+export function getCurrentFundingApplication<TProject extends { applications?: Array<{ updatedAt: Date }> }>(profile: { projects?: TProject[] }) {
+  type Application = NonNullable<TProject["applications"]>[number];
+  let current: { application: Application; project: TProject } | null = null;
 
   for (const project of profile.projects ?? []) {
     for (const application of project.applications ?? []) {
@@ -164,7 +161,7 @@ export type FundingDocumentAuditEvent = {
   createdAt: Date;
 };
 
-export function buildFundingTimeline(profile: FundingProfileWithRelations, documentAuditEvents: FundingDocumentAuditEvent[] = []): FundingReviewTimelineItem[] {
+export function buildFundingTimeline(profile: FundingProfileWithRelations, documentAuditEvents: FundingDocumentAuditEvent[] = [], collaboration: { communications?: Awaited<ReturnType<typeof listCommunications>>; notes?: Awaited<ReturnType<typeof listReviewerNotes>>; audits?: FundingDocumentAuditEvent[] } = {}): FundingReviewTimelineItem[] {
   const timeline: FundingReviewTimelineItem[] = [
     {
       id: `profile-${profile.id}-updated`,
@@ -175,6 +172,8 @@ export function buildFundingTimeline(profile: FundingProfileWithRelations, docum
       occurredAt: profile.updatedAt.toISOString(),
     },
   ];
+  const collaborationItems = projectFundingCommunicationTimeline(collaboration.communications ?? [], collaboration.notes ?? []);
+  const communicationKeys = new Set(collaborationItems.map((item) => item.sourceEventKey).filter(Boolean));
 
   if (profile.lastAssessmentDate) {
     timeline.push({
@@ -221,7 +220,7 @@ export function buildFundingTimeline(profile: FundingProfileWithRelations, docum
       }
 
       const decisionDate = application.decidedAt ?? application.decisionDate;
-      if (decisionDate) {
+      if (decisionDate && ![...communicationKeys].some((key) => key?.includes(`:${application.id}:`) && (key.includes("approved") || key.includes("rejected")))) {
         timeline.push({
           id: `application-${application.id}-decided`,
           type: "application",
@@ -238,7 +237,7 @@ export function buildFundingTimeline(profile: FundingProfileWithRelations, docum
   const auditedActions = new Set(documentAuditEvents.map((event) => `${event.entityId}:${event.action}`));
   for (const event of documentAuditEvents) {
     const document = event.entityId ? documentsById.get(event.entityId) : undefined;
-    if (!document) continue;
+    if (!document || [...communicationKeys].some((key) => key?.startsWith(`${event.action}:${document.id}:`))) continue;
     const eventDetails = event.action === "funding.document.uploaded"
       ? { title: "Supporting document uploaded", status: "COMPLETE" }
       : event.action === "funding.document.verified"
@@ -286,6 +285,13 @@ export function buildFundingTimeline(profile: FundingProfileWithRelations, docum
       status: reminder.status,
       occurredAt: reminder.createdAt.toISOString(),
     });
+  }
+
+  timeline.push(...collaborationItems.map(({ sourceEventKey: _sourceEventKey, ...item }) => item));
+  for (const event of collaboration.audits ?? []) {
+    if (event.action === "funding.communication.created" || event.action === "funding.note.created" || event.action === "funding.note.updated") continue;
+    if ([...communicationKeys].some((key) => key?.startsWith(`${event.action}:`))) continue;
+    timeline.push({ id: `audit-${event.id}`, type: "audit", title: event.action === "funding.note.deleted" ? "Reviewer note deleted" : event.action.split(".").slice(1).join(" "), description: "Funding workflow audit event.", status: null, occurredAt: event.createdAt.toISOString() });
   }
 
   return timeline.sort(
@@ -378,7 +384,7 @@ function mapProfile(profile: FundingProfileWithRelations): FundingReadinessLiveR
   };
 }
 
-function mapFundingReviewWorkspace(profile: FundingProfileWithRelations, reviewers: FundingReviewerOption[], documentAuditEvents: FundingDocumentAuditEvent[]): FundingReviewWorkspaceData {
+function mapFundingReviewWorkspace(profile: FundingProfileWithRelations, reviewers: FundingReviewerOption[], documentAuditEvents: FundingDocumentAuditEvent[], notes: Awaited<ReturnType<typeof listReviewerNotes>>, communications: Awaited<ReturnType<typeof listCommunications>>, audits: FundingDocumentAuditEvent[], actorUserId: string, superAdmin: boolean): FundingReviewWorkspaceData {
   const summary = mapProfile(profile);
   const currentApplication = getCurrentFundingApplication(profile);
   const applications = (profile.projects ?? []).flatMap((project) =>
@@ -452,8 +458,10 @@ function mapFundingReviewWorkspace(profile: FundingProfileWithRelations, reviewe
       dueAt: reminder.dueAt?.toISOString() ?? null,
       createdAt: reminder.createdAt.toISOString(),
     })),
-    timeline: buildFundingTimeline(profile, documentAuditEvents),
+    timeline: buildFundingTimeline(profile, documentAuditEvents, { notes, communications, audits }),
     reviewers,
+    reviewerNotes: notes.map((note) => ({ id: note.id, applicationId: note.applicationId, authorUserId: note.authorUserId, author: fundingPersonName(note.author), body: note.body, createdAt: note.createdAt.toISOString(), updatedAt: note.updatedAt.toISOString(), canEdit: superAdmin || note.authorUserId === actorUserId, canDelete: superAdmin || note.authorUserId === actorUserId })),
+    communications: communications.map((item) => ({ id: item.id, applicationId: item.applicationId, type: item.type, title: item.title, body: item.body, author: fundingPersonName(item.author), recipient: fundingPersonName(item.recipient), createdAt: item.createdAt.toISOString(), metadata: item.metadata })),
   };
 }
 
@@ -537,22 +545,36 @@ export async function getFundingReadinessByCentreIdFromDb(centreId: string) {
   return profile ? mapProfile(profile as FundingProfileWithRelations) : null;
 }
 
-export async function getFundingReviewWorkspaceFromDb(centreId: string): Promise<FundingReviewWorkspaceData | null> {
+export async function getFundingReviewWorkspaceFromDb(centreId: string, access: { actorUserId: string; superAdmin: boolean; fundingOrganisationIds: string[] }): Promise<FundingReviewWorkspaceData | null> {
+  const applicationWhere: Prisma.FundingApplicationWhereInput | undefined = access.superAdmin ? undefined : { fundingOrganisationId: { in: access.fundingOrganisationIds } };
+  const workspaceRelations = {
+    ...fundingProfileRelations,
+    projects: {
+      ...fundingProfileRelations.projects,
+      select: {
+        ...fundingProfileRelations.projects.select,
+        applications: { ...fundingProfileRelations.projects.select.applications, where: applicationWhere },
+      },
+    },
+  } satisfies Prisma.FundingProfileInclude;
   const [profile, reviewerUsers] = await Promise.all([
     prisma.fundingProfile.findFirst({
-      where: { OR: [{ centreId }, { centre: { slug: centreId } }] },
-      include: fundingProfileRelations
+      where: { OR: [{ centreId }, { centre: { slug: centreId } }], ...(applicationWhere ? { projects: { some: { applications: { some: applicationWhere } } } } : {}) },
+      include: workspaceRelations
     }),
     prisma.user.findMany({
       where: {
         status: "ACTIVE",
         role: { in: ["SUPER_ADMIN", "FUNDING_ORGANISATION"] },
+        ...(access.superAdmin ? {} : { role: "FUNDING_ORGANISATION", fundingUsers: { some: { fundingOrganisationId: { in: access.fundingOrganisationIds } } } }),
       },
       select: { id: true, firstName: true, lastName: true, email: true },
       orderBy: [{ firstName: "asc" }, { lastName: "asc" }, { email: "asc" }],
     }),
   ]);
   if (!profile) return null;
+  const typedProfile = profile as FundingProfileWithRelations;
+  const currentApplication = getCurrentFundingApplication(typedProfile);
   const documentIds = profile.supportingDocuments.map((document) => document.id);
   const documentAuditEvents = documentIds.length ? await prisma.auditLog.findMany({
     where: {
@@ -563,11 +585,18 @@ export async function getFundingReviewWorkspaceFromDb(centreId: string): Promise
     select: { id: true, action: true, entityId: true, createdAt: true },
     orderBy: { createdAt: "desc" },
   }) : [];
+  const [notes, communications, allNoteIds] = currentApplication ? await Promise.all([listReviewerNotes(currentApplication.application.id), listCommunications(currentApplication.application.id), listReviewerNoteIds(currentApplication.application.id)]) : [[], [], []];
+  const applicationIds = (typedProfile.projects ?? []).flatMap((project) => (project.applications ?? []).map((application) => application.id));
+  const noteIds = allNoteIds.map((note) => note.id);
+  const collaborationAudits = applicationIds.length || noteIds.length ? await prisma.auditLog.findMany({
+    where: { OR: [{ entityType: "FundingApplication", entityId: { in: applicationIds } }, { entityType: "FundingReviewerNote", entityId: { in: noteIds } }] },
+    select: { id: true, action: true, entityId: true, createdAt: true }, orderBy: { createdAt: "desc" },
+  }) : [];
   const reviewers = reviewerUsers.map((reviewer) => ({
     value: reviewer.id,
     label: [reviewer.firstName, reviewer.lastName].filter(Boolean).join(" ") || reviewer.email || "Unnamed reviewer",
   }));
-  return mapFundingReviewWorkspace(profile as FundingProfileWithRelations, reviewers, documentAuditEvents);
+  return mapFundingReviewWorkspace(typedProfile, reviewers, documentAuditEvents, notes, communications, collaborationAudits, access.actorUserId, access.superAdmin);
 }
 
 export async function getFundingReportsFromDb(): Promise<FundingReport> {
