@@ -9,7 +9,7 @@ const productionDirectives = [
   ["img-src", "'self' data: blob: https:"],
   ["font-src", "'self' https: data:"],
   ["connect-src", "'self' https://*.clerk.com https://*.clerk.accounts.dev https://*.supabase.co"],
-  ["script-src", "'self' https://*.clerk.com https://*.clerk.accounts.dev"],
+  ["script-src", "'self' 'unsafe-inline' https://*.clerk.com https://*.clerk.accounts.dev"],
   ["style-src", "'self' 'unsafe-inline'"],
   ["worker-src", "'self' blob:"],
   ["frame-src", "https://*.clerk.com"],

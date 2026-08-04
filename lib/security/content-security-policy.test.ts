@@ -10,14 +10,14 @@ test("production CSP is static, restrictive and provider-compatible", () => {
   assert.ok(policy.includes("https://*.clerk.accounts.dev"));
   assert.ok(policy.includes("https://*.supabase.co"));
   assert.equal(policy.includes("'unsafe-eval'"), false);
-  assert.ok(policy.includes("script-src 'self' https://*.clerk.com https://*.clerk.accounts.dev"));
+  assert.ok(policy.includes("script-src 'self' 'unsafe-inline' https://*.clerk.com https://*.clerk.accounts.dev"));
   assert.equal(policy.split(/\s+/).includes("*"), false);
 });
 
 test("development adds only unsafe-eval to the production policy", () => {
   const production = buildContentSecurityPolicy("production");
   const development = buildContentSecurityPolicy("development");
-  assert.equal(development, production.replace("script-src 'self' https://*.clerk.com https://*.clerk.accounts.dev;", "script-src 'self' https://*.clerk.com https://*.clerk.accounts.dev 'unsafe-eval';"));
+  assert.equal(development, production.replace("script-src 'self' 'unsafe-inline' https://*.clerk.com https://*.clerk.accounts.dev;", "script-src 'self' 'unsafe-inline' https://*.clerk.com https://*.clerk.accounts.dev 'unsafe-eval';"));
 });
 
 test("required headers are present and HSTS is production-only", () => {
