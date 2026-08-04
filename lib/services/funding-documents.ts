@@ -1,6 +1,7 @@
 import "server-only";
 import type { UserRole, UserStatus } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
+import { publishFundingNotification } from "@/lib/notifications";
 import { StorageAccessError } from "@/lib/storage/errors";
 import { storage, type UploadFileAssetInput } from "@/lib/storage/storage-service";
 import type { SafeFileAsset, SignedFileAccess, StorageAccessContext } from "@/lib/storage/types";
@@ -275,8 +276,16 @@ const defaultService = new FundingDocumentService(prismaFundingDocumentPersisten
 
 export const requireFundingDocumentAccess = (input: { documentId: string; actorUserId: string }) => defaultService.requireFundingDocumentAccess(input);
 export const uploadFundingSupportingDocument = (input: { documentId: string; actorUserId: string; file: StorageUploadFile }) => defaultService.uploadFundingSupportingDocument(input);
-export const verifyFundingSupportingDocument = (input: { documentId: string; actorUserId: string; reviewerComment?: string }) => defaultService.verifyFundingSupportingDocument(input);
-export const requestFundingDocumentResubmission = (input: { documentId: string; actorUserId: string; rejectionReason: string; reviewerComment?: string }) => defaultService.requestFundingDocumentResubmission(input);
+export const verifyFundingSupportingDocument = async (input: { documentId: string; actorUserId: string; reviewerComment?: string }) => {
+  const result = await defaultService.verifyFundingSupportingDocument(input);
+  await publishFundingNotification({ type: "FUNDING_DOCUMENT_VERIFIED", documentId: input.documentId, actorUserId: input.actorUserId });
+  return result;
+};
+export const requestFundingDocumentResubmission = async (input: { documentId: string; actorUserId: string; rejectionReason: string; reviewerComment?: string }) => {
+  const result = await defaultService.requestFundingDocumentResubmission(input);
+  await publishFundingNotification({ type: "FUNDING_DOCUMENT_RESUBMISSION_REQUESTED", documentId: input.documentId, actorUserId: input.actorUserId });
+  return result;
+};
 export const getFundingDocumentPreviewAccess = (input: { documentId: string; actorUserId: string }) => defaultService.getFundingDocumentPreviewAccess(input);
 export const getFundingDocumentDownloadAccess = (input: { documentId: string; actorUserId: string }) => defaultService.getFundingDocumentDownloadAccess(input);
 

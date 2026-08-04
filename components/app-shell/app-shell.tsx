@@ -4,7 +4,6 @@ import Link from "next/link";
 import { UserButton } from "@clerk/nextjs";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Bell,
   ChevronRight,
   Menu,
   Moon,
@@ -21,6 +20,7 @@ import type { AuthContext } from "@/lib/auth/session";
 import type { UserRole } from "@/lib/auth/roles";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/components/app-shell/theme-provider";
+import { NotificationCentre } from "@/components/notifications/notification-centre";
 
 function buildBreadcrumbs(pathname: string) {
   const parts = pathname.split("/").filter(Boolean);
@@ -180,10 +180,7 @@ export function AppShell({
               <Button variant="ghost" onClick={toggleTheme} aria-label="Toggle theme">
                 {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
               </Button>
-              <button className="relative grid h-10 w-10 place-items-center rounded-lg border border-brand-line text-slate-600 dark:border-slate-800 dark:text-slate-300">
-                <Bell className="h-5 w-5" />
-                <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-red-500" />
-              </button>
+              <NotificationCentre />
               {authContext.provider === "clerk" ? (
                 <UserButton afterSignOutUrl="/auth/sign-in" />
               ) : (

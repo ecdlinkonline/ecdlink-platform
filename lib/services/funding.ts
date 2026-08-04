@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db/prisma";
 import { fundingStatusToDb } from "@/lib/funding/format";
 import { createAuditLog } from "@/lib/repositories/audit-logs";
+import { publishFundingNotification } from "@/lib/notifications";
 import type {
   applicationDecisionSchema,
   createAssessmentSchema,
@@ -169,6 +170,7 @@ export async function createFundingApplication(input: z.infer<typeof createFundi
     }
   });
   await createAuditLog({ actorUserId, action: "funding.application.submit", entityType: "FundingApplication", entityId: application.id, after: application });
+  await publishFundingNotification({ type: "FUNDING_APPLICATION_SUBMITTED", applicationId: application.id, actorUserId });
   return application;
 }
 
@@ -235,6 +237,7 @@ export async function decideFundingApplication(applicationId: string, input: z.i
         actorUserId,
       },
     });
+    await publishFundingNotification({ type: "FUNDING_APPLICATION_REVIEWER_ASSIGNED", applicationId, actorUserId, reviewerUserId: reviewer!.id });
     return after;
   }
 
@@ -289,6 +292,13 @@ export async function decideFundingApplication(applicationId: string, input: z.i
     after,
     metadata: clarificationReason ? { reason: clarificationReason } : undefined
   });
+  if (isClarificationRequest) {
+    await publishFundingNotification({ type: "FUNDING_APPLICATION_CLARIFICATION_REQUESTED", applicationId, actorUserId });
+  } else if (input.status === "Approved") {
+    await publishFundingNotification({ type: "FUNDING_APPLICATION_APPROVED", applicationId, actorUserId });
+  } else if (input.status === "Rejected") {
+    await publishFundingNotification({ type: "FUNDING_APPLICATION_REJECTED", applicationId, actorUserId });
+  }
   return after;
 }
 

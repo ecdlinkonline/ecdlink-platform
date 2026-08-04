@@ -25,6 +25,35 @@ enum UserStatus {
   ARCHIVED
 }
 
+enum NotificationModule {
+  FUNDING
+  COMPLIANCE
+  PROCUREMENT
+  MEMBERSHIP
+  SUPPLIERS
+  CENTRES
+  PARTNERS
+  PLATFORM
+}
+
+enum NotificationType {
+  FUNDING_APPLICATION_SUBMITTED
+  FUNDING_APPLICATION_CLARIFICATION_REQUESTED
+  FUNDING_APPLICATION_APPROVED
+  FUNDING_APPLICATION_REJECTED
+  FUNDING_APPLICATION_REVIEWER_ASSIGNED
+  FUNDING_DOCUMENT_RESUBMISSION_REQUESTED
+  FUNDING_DOCUMENT_VERIFIED
+  PLATFORM_GENERAL
+}
+
+enum NotificationDeliveryPreference {
+  EMAIL
+  IN_APP
+  BOTH
+  NONE
+}
+
 enum EcdlinkStaffDepartment {
   OPERATIONS
   CENTRE_SUPPORT
@@ -336,6 +365,9 @@ model User {
   verifiedDocuments           ComplianceDocument[]           @relation("VerifiedDocuments")
   rejectedDocuments           ComplianceDocument[]           @relation("RejectedComplianceDocuments")
   auditLogs                   AuditLog[]
+  receivedNotifications       Notification[]                 @relation("ReceivedNotifications")
+  createdNotifications        Notification[]                 @relation("CreatedNotifications")
+  notificationPreferences     NotificationPreference[]
   sentMessages                Message[]                      @relation("SentMessages")
   membershipPayments          MembershipPayment[]
   intelligenceQueries         IntelligenceQuery[]
@@ -1717,14 +1749,40 @@ model FundingAssessment {
 }
 
 model Notification {
-  id        String     @id @default(cuid())
-  userId    String?
-  centreId  String?
-  title     String
-  body      String
-  readAt    DateTime?
-  createdAt DateTime   @default(now())
-  centre    EcdCentre? @relation(fields: [centreId], references: [id])
+  id              String             @id @default(cuid())
+  userId          String?
+  recipientUserId String?
+  actorUserId     String?
+  centreId        String?
+  module          NotificationModule @default(PLATFORM)
+  type            NotificationType   @default(PLATFORM_GENERAL)
+  title           String
+  body            String
+  href             String?
+  metadata         Json?
+  readAt           DateTime?
+  createdAt        DateTime           @default(now())
+  recipient        User?              @relation("ReceivedNotifications", fields: [recipientUserId], references: [id], onDelete: Cascade)
+  actor            User?              @relation("CreatedNotifications", fields: [actorUserId], references: [id], onDelete: SetNull)
+  centre           EcdCentre?         @relation(fields: [centreId], references: [id])
+
+  @@index([recipientUserId, readAt, createdAt])
+  @@index([recipientUserId, module, createdAt])
+  @@index([recipientUserId, type, createdAt])
+  @@index([centreId, createdAt])
+}
+
+model NotificationPreference {
+  id        String                         @id @default(cuid())
+  userId    String
+  type      NotificationType
+  delivery  NotificationDeliveryPreference @default(BOTH)
+  createdAt DateTime                       @default(now())
+  updatedAt DateTime                       @updatedAt
+  user      User                           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, type])
+  @@index([userId])
 }
 
 model MessageThread {
