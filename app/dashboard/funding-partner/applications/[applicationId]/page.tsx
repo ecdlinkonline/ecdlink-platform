@@ -4,6 +4,8 @@ import { FundingReviewWorkspace } from "@/components/funding/funding-review-work
 import { getFundingPartnerAccess } from "@/lib/funding/partner-access";
 import { getFundingPartnerReviewWorkspaceByApplicationIdFromDb } from "@/lib/repositories/funding";
 
+export const dynamic = "force-dynamic";
+
 export default async function FundingPartnerApplicationPage({ params }: { params: Promise<{ applicationId: string }> }) {
   const [{ applicationId }, access] = await Promise.all([params, getFundingPartnerAccess()]);
   if (!access) notFound();

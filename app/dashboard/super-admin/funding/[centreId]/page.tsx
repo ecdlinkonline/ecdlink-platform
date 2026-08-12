@@ -5,6 +5,8 @@ import { getFundingReviewWorkspaceFromDb } from "@/lib/repositories/funding";
 import { getAuthContext } from "@/lib/auth/session";
 import { getInternalUserByClerkId } from "@/lib/repositories/users";
 
+export const dynamic = "force-dynamic";
+
 type FundingReviewPageProps = {
   params: Promise<{ centreId: string }>;
 };
