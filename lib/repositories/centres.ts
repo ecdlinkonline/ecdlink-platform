@@ -57,12 +57,7 @@ export async function getCentreAreasFromDb() {
   return rows.map((row) => row.area).filter((area): area is string => Boolean(area));
 }
 
-export async function updateCentreProfileInDb(
-  slug: string,
-  input: CentreUpdateInput,
-  actorUserId?: string,
-  authenticatedUserId?: string
-) {
+export async function updateCentreProfileInDb(slug: string, input: CentreUpdateInput, actorUserId?: string) {
   return prisma.$transaction(async (tx) => {
     const beforeRecord = await tx.ecdCentre.findUnique({ where: { slug }, include: centreInclude });
     const before = beforeRecord ? mapDbCentreToDto(beforeRecord) : null;
@@ -92,25 +87,6 @@ export async function updateCentreProfileInDb(
       include: centreInclude
     });
     const after = mapDbCentreToDto(centre);
-    const [databaseContext, transactionActor] = await Promise.all([
-      tx.$queryRaw<Array<{ databaseName: string; currentSchema: string }>>`
-        SELECT current_database() AS "databaseName", current_schema() AS "currentSchema"
-      `,
-      actorUserId
-        ? tx.user.findUnique({ where: { id: actorUserId }, select: { id: true, clerkUserId: true } })
-        : Promise.resolve(null)
-    ]);
-    console.error("[centre-audit-diagnostic]", {
-      clerkUserId: authenticatedUserId ?? null,
-      internalUserId: actorUserId ?? null,
-      databaseName: databaseContext[0]?.databaseName ?? null,
-      currentSchema: databaseContext[0]?.currentSchema ?? null,
-      actorExistsInTransaction: Boolean(transactionActor),
-      auditActorUserId: actorUserId ?? null,
-      actorClerkIdMatchesAuthenticatedRequest: Boolean(
-        transactionActor && authenticatedUserId && transactionActor.clerkUserId === authenticatedUserId
-      )
-    });
     await tx.auditLog.create({
       data: {
         actorUserId,
