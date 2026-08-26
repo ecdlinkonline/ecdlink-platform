@@ -68,11 +68,16 @@ export async function getCentreAreas() {
   return Array.from(new Set(seededCentres.map((centre) => centre.area))).sort();
 }
 
-export async function updateCentreProfile(id: string, input: Partial<EcdCentre> | CentreUpdateInput, actorUserId?: string) {
+export async function updateCentreProfile(
+  id: string,
+  input: Partial<EcdCentre> | CentreUpdateInput,
+  actorUserId?: string,
+  authenticatedUserId?: string
+) {
   const parsed = centreUpdateSchema.partial().parse(input);
 
   if (hasDatabaseConfig()) {
-    return updateCentreProfileInDb(id, parsed, actorUserId);
+    return updateCentreProfileInDb(id, parsed, actorUserId, authenticatedUserId);
   }
 
   const centre = await getCentreById(id);
