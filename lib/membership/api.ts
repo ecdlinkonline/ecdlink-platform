@@ -1,9 +1,9 @@
-import { getAuthContext } from "@/lib/auth/session";
+import { getInternalAuthContext } from "@/lib/auth/internal-context";
 import { hasDatabaseConfig } from "@/lib/db/env";
 import { annualMembershipFee } from "@/lib/membership/format";
 import { membershipRecords } from "@/lib/membership/data";
 import type { MembershipFilters, MembershipRecord, MembershipReport } from "@/lib/membership/types";
-import { getCentreIdForClerkUser, getMembershipRecordByCentreId } from "@/lib/repositories/memberships";
+import { getMembershipRecordByCentreId } from "@/lib/repositories/memberships";
 import { getMembershipReportsFromDatabase, listMembershipsFromDatabase } from "@/lib/services/memberships";
 
 function filterFallbackMemberships(filters: MembershipFilters = {}) {
@@ -83,12 +83,12 @@ export async function getMembershipByCentreId(centreId: string) {
 
 export async function getCurrentCentreMembership() {
   if (hasDatabaseConfig()) {
-    const authContext = await getAuthContext();
-    if (!authContext) return null;
-    if (authContext.role === "super_admin") {
+    const context = await getInternalAuthContext();
+    if (context.reason !== null) return null;
+    if (context.internalUser.role === "SUPER_ADMIN") {
       return getMembershipRecordByCentreId("little-stars-ecd");
     }
-    const centreId = await getCentreIdForClerkUser(authContext.userId);
+    const centreId = context.internalUser.centreUsers[0]?.centreId;
     return centreId ? getMembershipRecordByCentreId(centreId) : null;
   }
 

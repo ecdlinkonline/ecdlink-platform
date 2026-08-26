@@ -3,33 +3,26 @@
 import { Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { useUser } from "@clerk/nextjs";
-import { getDashboardPath, roleOptions, type UserRole } from "@/lib/auth/roles";
+import { getDashboardPath, roleOptions } from "@/lib/auth/roles";
+import { isSelfServiceRole, type SelfServiceRole } from "@/lib/auth/role-mapping";
 
 export function RoleSelectionForm() {
   const router = useRouter();
-  const { isLoaded, user } = useUser();
-  const [role, setRole] = useState<UserRole>("ecd_centre");
+  const [role, setRole] = useState<SelfServiceRole>("ecd_centre");
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState("");
 
   async function saveRole() {
-    if (!isLoaded || !user) {
-      setError("Your Clerk session is still loading. Please try again.");
-      return;
-    }
-
     setIsSaving(true);
     setError("");
 
     try {
-      await user.update({
-        unsafeMetadata: {
-          ...user.unsafeMetadata,
-          role
-        }
+      const response = await fetch("/api/auth/onboarding", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ role })
       });
-      await user.reload();
+      if (!response.ok) throw new Error("Onboarding failed.");
       router.push(getDashboardPath(role));
     } catch {
       setError("We could not save your role. Please try again.");
@@ -45,29 +38,14 @@ export function RoleSelectionForm() {
       </p>
 
       <div className="mt-8 grid gap-3">
-        {roleOptions.map((option) => (
-          <button
-            key={option.id}
-            type="button"
-            onClick={() => setRole(option.id)}
-            className={`flex gap-4 rounded-lg border p-4 text-left transition ${
-              role === option.id ? "border-brand-navy bg-blue-50" : "border-brand-line hover:border-brand-navy"
-            }`}
-          >
-            <div
-              className={`grid h-11 w-11 shrink-0 place-items-center rounded-lg ${
-                role === option.id ? "bg-brand-navy text-white" : "bg-brand-accent text-brand-navy"
-              }`}
-            >
-              <option.icon className="h-5 w-5" />
-            </div>
-            <span>
-              <span className="block font-bold text-brand-ink">{option.title}</span>
-              <span className="mt-1 block text-sm leading-6 text-slate-600">{option.description}</span>
-            </span>
+        {roleOptions.filter((option): option is typeof option & { id: SelfServiceRole } => isSelfServiceRole(option.id)).map((option) => (
+          <button key={option.id} type="button" onClick={() => setRole(option.id)} className={`flex gap-4 rounded-lg border p-4 text-left transition ${role === option.id ? "border-brand-navy bg-blue-50" : "border-brand-line hover:border-brand-navy"}`}>
+            <div className={`grid h-11 w-11 shrink-0 place-items-center rounded-lg ${role === option.id ? "bg-brand-navy text-white" : "bg-brand-accent text-brand-navy"}`}><option.icon className="h-5 w-5" /></div>
+            <span><span className="block font-bold text-brand-ink">{option.title}</span><span className="mt-1 block text-sm leading-6 text-slate-600">{option.description}</span></span>
           </button>
         ))}
       </div>
+      <p className="mt-4 text-xs leading-5 text-slate-500">Super Admin and ECDLink Staff access can only be assigned through trusted administrative workflows.</p>
 
       {error ? <p className="mt-4 text-sm font-semibold text-red-600">{error}</p> : null}
 

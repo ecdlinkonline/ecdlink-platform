@@ -1,8 +1,7 @@
-import { getAuthContext } from "@/lib/auth/session";
+import { getInternalAuthContext } from "@/lib/auth/internal-context";
 import { hasDatabaseConfig } from "@/lib/db/env";
 import { complianceDocumentTypes, complianceRecords } from "@/lib/compliance/data";
 import type { CentreComplianceRecord, ComplianceDocumentStatus, ComplianceFilters, ComplianceReport } from "@/lib/compliance/types";
-import { getInternalUserByClerkId } from "@/lib/repositories/users";
 import {
   getComplianceRecordByCentreIdFromDb,
   getComplianceReportsFromDb,
@@ -67,10 +66,10 @@ export async function getComplianceByCentreId(centreId: string) {
 
 export async function getCurrentCentreCompliance() {
   if (hasDatabaseConfig()) {
-    const authContext = await getAuthContext();
-    if (!authContext) return null;
-    if (authContext.role === "super_admin") return getComplianceRecordByCentreIdFromDb("little-stars-ecd");
-    const user = await getInternalUserByClerkId(authContext.userId);
+    const context = await getInternalAuthContext();
+    if (context.reason !== null) return null;
+    if (context.internalUser.role === "SUPER_ADMIN") return getComplianceRecordByCentreIdFromDb("little-stars-ecd");
+    const user = context.internalUser;
     const centreId = user?.centreUsers[0]?.centreId;
     return centreId ? getComplianceRecordByCentreIdFromDb(centreId) : null;
   }

@@ -1,30 +1,25 @@
 import { apiError } from "@/lib/api/responses";
-import { getAuthContext } from "@/lib/auth/session";
-import { hasDatabaseConfig } from "@/lib/db/env";
-import { getInternalUserByClerkId } from "@/lib/repositories/users";
+import { requireApiInternalUser } from "@/lib/api/internal-auth";
 
 export async function requirePartnerModuleUser() {
-  const authContext = await getAuthContext();
-  if (!authContext) return { error: apiError("Authentication required.", 401) };
-  if (!hasDatabaseConfig()) return { error: apiError("Database is not configured.", 503) };
-  const internalUser = await getInternalUserByClerkId(authContext.userId);
-  if (!internalUser || internalUser.status !== "ACTIVE") return { error: apiError("Internal user is not active.", 403) };
-  if (!["super_admin", "donor", "ecd_centre"].includes(authContext.role ?? "")) return { error: apiError("You do not have access to partnership records.", 403) };
-  return { authContext, internalUser };
+  const context = await requireApiInternalUser();
+  if ("error" in context) return context;
+  if (!["SUPER_ADMIN", "DONOR", "ECD_CENTRE"].includes(context.internalUser.role)) return { error: apiError("You do not have access to partnership records.", 403) };
+  return context;
 }
 
 export async function requirePartnerAdmin() {
   const context = await requirePartnerModuleUser();
   if ("error" in context) return context;
-  if (context.authContext.role !== "super_admin") return { error: apiError("Only Super Admin users can manage partner moderation.", 403) };
+  if (context.internalUser.role !== "SUPER_ADMIN") return { error: apiError("Only Super Admin users can manage partner moderation.", 403) };
   return context;
 }
 
 export async function requirePartnerOwnership(requiredPermission?: string) {
   const context = await requirePartnerModuleUser();
   if ("error" in context) return context;
-  if (context.authContext.role === "super_admin") return { ...context, partnerIds: null as string[] | null, centreIds: null as string[] | null };
-  if (context.authContext.role === "ecd_centre") {
+  if (context.internalUser.role === "SUPER_ADMIN") return { ...context, partnerIds: null as string[] | null, centreIds: null as string[] | null };
+  if (context.internalUser.role === "ECD_CENTRE") {
     const centreIds = context.internalUser.centreUsers.map((membership) => membership.centreId);
     if (!centreIds.length) return { error: apiError("No centre ownership found for this user.", 403) };
     return { ...context, partnerIds: [] as string[] | null, centreIds };

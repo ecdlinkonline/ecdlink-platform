@@ -1,7 +1,5 @@
 import { apiError } from "@/lib/api/responses";
-import { getAuthContext } from "@/lib/auth/session";
-import { hasDatabaseConfig } from "@/lib/db/env";
-import { getInternalUserByClerkId } from "@/lib/repositories/users";
+import { requireApiInternalUser } from "@/lib/api/internal-auth";
 import type { UserRole } from "@/lib/auth/roles";
 
 export type IntelligenceScope = {
@@ -16,33 +14,22 @@ export type IntelligenceScope = {
   isPlatformWide: boolean;
 };
 
-function databaseRole(role: UserRole | null): IntelligenceScope["databaseRole"] {
-  if (role === "super_admin") return "SUPER_ADMIN";
-  if (role === "ecdlink_staff") return "ECDLINK_STAFF";
-  if (role === "supplier") return "SUPPLIER";
-  if (role === "donor") return "DONOR";
-  if (role === "funding_partner") return "FUNDING_ORGANISATION";
-  return "ECD_CENTRE";
-}
-
 export async function requireIntelligenceAccess() {
-  const authContext = await getAuthContext();
-  if (!authContext) return { error: apiError("Authentication required.", 401) };
-  if (!hasDatabaseConfig()) return { error: apiError("Database is not configured.", 503) };
-  const internalUser = await getInternalUserByClerkId(authContext.userId);
-  if (!internalUser || internalUser.status !== "ACTIVE") return { error: apiError("Internal user is not active.", 403) };
+  const context = await requireApiInternalUser();
+  if ("error" in context) return context;
+  const { authContext, internalUser } = context;
   if (!authContext.role) return { error: apiError("A platform role is required for Intelligence access.", 403) };
 
   const scope: IntelligenceScope = {
     authRole: authContext.role,
-    databaseRole: databaseRole(authContext.role),
+    databaseRole: internalUser.role,
     userId: internalUser.id,
     roleId: internalUser.roleId ?? undefined,
     centreIds: internalUser.centreUsers.map((item) => item.centreId),
     supplierIds: internalUser.supplierUsers.filter((item) => item.status === "ACTIVE").map((item) => item.supplierId),
     donorOrganisationIds: internalUser.donorUsers.filter((item) => item.status === "ACTIVE").map((item) => item.donorOrganisationId),
     fundingOrganisationIds: internalUser.fundingUsers.map((item) => item.fundingOrganisationId),
-    isPlatformWide: authContext.role === "super_admin"
+    isPlatformWide: internalUser.role === "SUPER_ADMIN"
   };
 
   if (!scope.isPlatformWide) {

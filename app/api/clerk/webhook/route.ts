@@ -17,21 +17,9 @@ type ClerkWebhookPayload = {
     last_name?: string;
     phone_numbers?: Array<{ phone_number: string; id: string }>;
     primary_phone_number_id?: string;
-    public_metadata?: { role?: string };
-    unsafe_metadata?: { role?: string };
     organization?: { id?: string; slug?: string };
   };
 };
-
-function mapRole(role: unknown) {
-  if (role === "super_admin") return "SUPER_ADMIN";
-  if (role === "ecdlink_staff") return "ECDLINK_STAFF";
-  if (role === "supplier") return "SUPPLIER";
-  if (role === "donor") return "DONOR";
-  if (role === "funding_partner") return "FUNDING_ORGANISATION";
-  if (role === "system") return "SYSTEM";
-  return "ECD_CENTRE";
-}
 
 function emailFromPayload(data: ClerkWebhookPayload["data"]) {
   return data.email_addresses?.find((item) => item.id === data.primary_email_address_id)?.email_address ?? data.email_address ?? data.email_addresses?.[0]?.email_address;
@@ -67,14 +55,12 @@ export async function POST(request: Request) {
   }
 
   if (["user.created", "user.updated", "email.updated"].includes(payload.type)) {
-    const role = mapRole(payload.data.public_metadata?.role ?? payload.data.unsafe_metadata?.role);
     const user = await upsertUserFromClerk({
       clerkUserId: payload.data.user_id ?? payload.data.id,
       email: emailFromPayload(payload.data),
       firstName: payload.data.first_name,
       lastName: payload.data.last_name,
-      phone: phoneFromPayload(payload.data),
-      role
+      phone: phoneFromPayload(payload.data)
     });
 
     await prisma.auditLog.create({

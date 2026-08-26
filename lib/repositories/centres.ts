@@ -8,7 +8,6 @@ import {
   readinessToDb,
   registrationToDb
 } from "@/lib/db/mappers";
-import { createAuditLog } from "@/lib/repositories/audit-logs";
 import type { CentreFilters, EcdCentre } from "@/lib/centres/types";
 import type { CentreUpdateInput } from "@/lib/validators/centres";
 
@@ -59,35 +58,47 @@ export async function getCentreAreasFromDb() {
 }
 
 export async function updateCentreProfileInDb(slug: string, input: CentreUpdateInput, actorUserId?: string) {
-  const before = await getCentreBySlugFromDb(slug);
-  const centre = await prisma.ecdCentre.update({
-    where: { slug },
-    data: {
-      centreName: input.centreName,
-      principalName: input.principalName,
-      contactPerson: input.contactPerson,
-      phone: input.phoneNumber,
-      email: input.emailAddress,
-      physicalAddress: input.physicalAddress,
-      npoNumber: input.npoNumber,
-      dbeRegistrationStatus: input.dbeRegistrationStatus,
-      area: input.area,
-      region: input.region,
-      numberOfChildren: input.numberOfChildren,
-      numberOfStaff: input.numberOfStaff,
-      activities: {
-        create: {
-          title: "Profile updated",
-          description: "Centre profile details were updated in the production database.",
-          type: "PROFILE"
+  return prisma.$transaction(async (tx) => {
+    const beforeRecord = await tx.ecdCentre.findUnique({ where: { slug }, include: centreInclude });
+    const before = beforeRecord ? mapDbCentreToDto(beforeRecord) : null;
+    const centre = await tx.ecdCentre.update({
+      where: { slug },
+      data: {
+        centreName: input.centreName,
+        principalName: input.principalName,
+        contactPerson: input.contactPerson,
+        phone: input.phoneNumber,
+        email: input.emailAddress,
+        physicalAddress: input.physicalAddress,
+        npoNumber: input.npoNumber,
+        dbeRegistrationStatus: input.dbeRegistrationStatus,
+        area: input.area,
+        region: input.region,
+        numberOfChildren: input.numberOfChildren,
+        numberOfStaff: input.numberOfStaff,
+        activities: {
+          create: {
+            title: "Profile updated",
+            description: "Centre profile details were updated in the production database.",
+            type: "PROFILE"
+          }
         }
+      },
+      include: centreInclude
+    });
+    const after = mapDbCentreToDto(centre);
+    await tx.auditLog.create({
+      data: {
+        actorUserId,
+        action: "centre.profile.update",
+        entityType: "EcdCentre",
+        entityId: centre.id,
+        before: before === null ? undefined : JSON.parse(JSON.stringify(before)),
+        after: JSON.parse(JSON.stringify(after))
       }
-    },
-    include: centreInclude
+    });
+    return after;
   });
-  const after = mapDbCentreToDto(centre);
-  await createAuditLog({ actorUserId, action: "centre.profile.update", entityType: "EcdCentre", entityId: centre.id, before, after });
-  return after;
 }
 
 export function seededCentreToDbCreate(centre: EcdCentre) {

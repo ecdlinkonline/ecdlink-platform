@@ -41,12 +41,7 @@ export async function POST(request: Request) {
     return context.error;
   }
 
-  const centreIds =
-    "centreIds" in context
-      ? context.centreIds
-      : context.internalUser.centreUsers.map(
-          (ownership) => ownership.centreId
-        );
+  const centreIds = context.centreIds;
 
   try {
     const input = createFundingApplicationSchema.parse(

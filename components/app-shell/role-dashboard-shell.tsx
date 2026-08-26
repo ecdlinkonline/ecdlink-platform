@@ -1,8 +1,7 @@
 import { redirect } from "next/navigation";
 import { AppShell } from "@/components/app-shell/app-shell";
 import { getDashboardPath, type UserRole } from "@/lib/auth/roles";
-import { getAuthContext } from "@/lib/auth/session";
-import { syncCurrentUserOnLogin } from "@/lib/auth/permissions";
+import { requireInternalUser, syncCurrentUserOnLogin } from "@/lib/auth/permissions";
 
 export async function RoleDashboardShell({
   role,
@@ -11,11 +10,8 @@ export async function RoleDashboardShell({
   role: UserRole;
   children: React.ReactNode;
 }) {
-  const authContext = await getAuthContext();
-
-  if (!authContext) {
-    redirect("/auth/sign-in");
-  }
+  await syncCurrentUserOnLogin();
+  const { authContext } = await requireInternalUser();
 
   if (!authContext.role) {
     redirect("/auth/select-role");
@@ -24,8 +20,6 @@ export async function RoleDashboardShell({
   if (authContext.role !== role) {
     redirect(getDashboardPath(authContext.role));
   }
-
-  await syncCurrentUserOnLogin();
 
   return (
     <AppShell authContext={authContext} role={role}>

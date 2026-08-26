@@ -1,25 +1,12 @@
 import { auth as clerkAuth, currentUser } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
 import { hasPermission } from "@/lib/auth/rbac";
+import { getInternalAuthContext } from "@/lib/auth/internal-context";
 import { getAuthContext } from "@/lib/auth/session";
 import { hasDatabaseConfig } from "@/lib/db/env";
 import { prisma } from "@/lib/db/prisma";
-import {
-  getInternalUserByClerkId,
-  getUserPermissions,
-  recordSession,
-  upsertUserFromClerk
-} from "@/lib/repositories/users";
+import { recordSession, upsertUserFromClerk } from "@/lib/repositories/users";
 import type { UserRole } from "@/lib/auth/roles";
-
-function mapRole(role: UserRole | null) {
-  if (role === "super_admin") return "SUPER_ADMIN";
-  if (role === "ecdlink_staff") return "ECDLINK_STAFF";
-  if (role === "supplier") return "SUPPLIER";
-  if (role === "donor") return "DONOR";
-  if (role === "funding_partner") return "FUNDING_ORGANISATION";
-  return "ECD_CENTRE";
-}
 
 export async function requireAuthenticatedUser() {
   const authContext = await getAuthContext();
@@ -38,8 +25,7 @@ export async function syncCurrentUserOnLogin(requestMeta?: { ipAddress?: string;
     email: clerkUser?.primaryEmailAddress?.emailAddress,
     firstName: clerkUser?.firstName ?? undefined,
     lastName: clerkUser?.lastName ?? undefined,
-    phone: clerkUser?.primaryPhoneNumber?.phoneNumber,
-    role: mapRole(authContext.role)
+    phone: clerkUser?.primaryPhoneNumber?.phoneNumber
   });
 
   await recordSession({
@@ -64,22 +50,16 @@ export async function syncCurrentUserOnLogin(requestMeta?: { ipAddress?: string;
 }
 
 export async function requireInternalUser() {
-  const authContext = await requireAuthenticatedUser();
-  if (!hasDatabaseConfig()) return { authContext, internalUser: null, permissions: [] };
-  const internalUser = await getInternalUserByClerkId(authContext.userId);
-  if (!internalUser || internalUser.status !== "ACTIVE") redirect("/auth/sign-in");
-  const permissions = await getUserPermissions(authContext.userId);
-  return { authContext, internalUser, permissions };
+  await requireAuthenticatedUser();
+  const context = await getInternalAuthContext();
+  if (context.reason !== null) redirect(context.reason === "database_unavailable" ? "/dashboard" : "/auth/sign-in");
+  return context;
 }
 
 export async function requireRole(...roles: UserRole[]) {
-  const authContext = await requireAuthenticatedUser();
-  if (!authContext.role || !roles.includes(authContext.role)) redirect("/dashboard");
-  if (hasDatabaseConfig()) {
-    const user = await getInternalUserByClerkId(authContext.userId);
-    if (!user || user.status !== "ACTIVE") redirect("/auth/sign-in");
-  }
-  return authContext;
+  const context = await requireInternalUser();
+  if (!context.authContext.role || !roles.includes(context.authContext.role)) redirect("/dashboard");
+  return context.authContext;
 }
 
 export async function requireSuperAdmin() {

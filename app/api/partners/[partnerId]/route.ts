@@ -24,12 +24,7 @@ export async function GET(
     return context.error;
   }
 
-  const partnerIds =
-    "partnerIds" in context
-      ? context.partnerIds
-      : context.internalUser.donorUsers.map(
-          (membership) => membership.donorOrganisationId
-        );
+  const partnerIds = context.partnerIds;
 
   const accessContext = {
     authContext: context.authContext,
@@ -78,12 +73,7 @@ export async function PATCH(
     return context.error;
   }
 
-  const partnerIds =
-    "partnerIds" in context
-      ? context.partnerIds
-      : context.internalUser.donorUsers.map(
-          (membership) => membership.donorOrganisationId
-        );
+  const partnerIds = context.partnerIds;
 
   const accessContext = {
     authContext: context.authContext,

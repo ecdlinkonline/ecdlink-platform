@@ -75,12 +75,7 @@ export async function POST(
     return context.error;
   }
 
-  const centreIds =
-    "centreIds" in context
-      ? context.centreIds
-      : context.internalUser.centreUsers.map(
-          (ownership) => ownership.centreId
-        );
+  const centreIds = context.centreIds;
 
   try {
     const { projectId } = await params;

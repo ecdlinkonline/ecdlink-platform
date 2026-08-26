@@ -43,12 +43,7 @@ export async function PATCH(
     return context.error;
   }
 
-  const fundingOrganisationIds =
-    "fundingOrganisationIds" in context
-      ? context.fundingOrganisationIds
-      : context.internalUser.fundingUsers.map(
-          (membership) => membership.fundingOrganisationId
-        );
+  const fundingOrganisationIds = context.fundingOrganisationIds;
 
   try {
     const { opportunityId } = await params;

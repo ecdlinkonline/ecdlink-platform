@@ -4,6 +4,9 @@ import {
   type UserRole,
 } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
+import { clerkIdentityUpdate } from "@/lib/auth/clerk-sync";
+import { selfServiceOnboardingCompletionData, selfServiceOnboardingEligibilityWhere } from "@/lib/auth/onboarding";
+import { databaseRoleForSelfServiceRole, type SelfServiceRole } from "@/lib/auth/role-mapping";
 import {
   permissionsForPlatformRole,
   platformRoles,
@@ -16,7 +19,6 @@ export type SyncUserInput = {
   firstName?: string;
   lastName?: string;
   phone?: string;
-  role?: UserRole;
 };
 
 function toAuditJson(
@@ -82,20 +84,7 @@ export async function seedRolesAndPermissions() {
 export async function upsertUserFromClerk(
   input: SyncUserInput
 ) {
-  const role = input.role ?? "ECD_CENTRE";
-
-  const roleRecord = await prisma.role.upsert({
-    where: {
-      key: role,
-    },
-    update: {},
-    create: {
-      key: role,
-      name:
-        platformRoles[role as DatabaseUserRole]
-          ?.name ?? role,
-    },
-  });
+  const role: UserRole = "ECD_CENTRE";
 
   return prisma.user.upsert({
     where: {
@@ -108,19 +97,12 @@ export async function upsertUserFromClerk(
       lastName: input.lastName,
       phone: input.phone,
       role,
-      roleId: roleRecord.id,
-      status: "ACTIVE",
+      roleId: null,
+      status: "INVITED",
       lastLoginAt: new Date(),
     },
     update: {
-      email: input.email,
-      firstName: input.firstName,
-      lastName: input.lastName,
-      phone: input.phone,
-      role,
-      roleId: roleRecord.id,
-      status: "ACTIVE",
-      lastLoginAt: new Date(),
+      ...clerkIdentityUpdate(input),
     },
   });
 }
@@ -148,6 +130,41 @@ export async function archiveUserFromClerk(
   });
 }
 
+const internalUserInclude = {
+  roleRecord: {
+    include: {
+      permissions: {
+        include: {
+          permission: true,
+        },
+      },
+    },
+  },
+  centreUsers: {
+    where: {
+      status: "ACTIVE" as const,
+    },
+    include: {
+      centre: true,
+    },
+  },
+  supplierUsers: {
+    include: {
+      supplier: true,
+    },
+  },
+  donorUsers: {
+    include: {
+      organisation: true,
+    },
+  },
+  fundingUsers: {
+    include: {
+      organisation: true,
+    },
+  },
+};
+
 export async function getInternalUserByClerkId(
   clerkUserId: string
 ) {
@@ -155,40 +172,33 @@ export async function getInternalUserByClerkId(
     where: {
       clerkUserId,
     },
-    include: {
-      roleRecord: {
-        include: {
-          permissions: {
-            include: {
-              permission: true,
-            },
-          },
-        },
-      },
-      centreUsers: {
-        where: {
-          status: "ACTIVE",
-        },
-        include: {
-          centre: true,
-        },
-      },
-      supplierUsers: {
-        include: {
-          supplier: true,
-        },
-      },
-      donorUsers: {
-        include: {
-          organisation: true,
-        },
-      },
-      fundingUsers: {
-        include: {
-          organisation: true,
-        },
-      },
-    },
+    include: internalUserInclude,
+  });
+}
+
+export async function getInternalUserByEmail(email: string) {
+  return prisma.user.findFirst({
+    where: { email: { equals: email, mode: "insensitive" } },
+    include: internalUserInclude,
+  });
+}
+
+export async function setSelfServiceOnboardingRole(userId: string, requestedRole: SelfServiceRole) {
+  const role = databaseRoleForSelfServiceRole(requestedRole);
+  return prisma.$transaction(async (tx) => {
+    const roleRecord = await tx.role.upsert({
+      where: { key: role },
+      update: {},
+      create: { key: role, name: platformRoles[role].name }
+    });
+    const claimed = await tx.user.updateMany({
+      where: selfServiceOnboardingEligibilityWhere(userId),
+      data: selfServiceOnboardingCompletionData(role, roleRecord.id)
+    });
+    if (claimed.count !== 1) {
+      throw new Error("This account is not eligible for self-service onboarding.");
+    }
+    return tx.user.findUniqueOrThrow({ where: { id: userId } });
   });
 }
 
@@ -218,9 +228,14 @@ export async function changeUserRole(
   role: UserRole,
   actorUserId?: string
 ) {
-  const roleRecord = await prisma.role.findUnique({
+  const roleRecord = await prisma.role.upsert({
     where: {
       key: role,
+    },
+    update: {},
+    create: {
+      key: role,
+      name: platformRoles[role].name,
     },
   });
 
@@ -236,7 +251,7 @@ export async function changeUserRole(
     },
     data: {
       role,
-      roleId: roleRecord?.id,
+      roleId: roleRecord.id,
     },
     include: {
       roleRecord: true,

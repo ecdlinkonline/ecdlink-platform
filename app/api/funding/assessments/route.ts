@@ -17,12 +17,7 @@ export async function GET() {
     return context.error;
   }
 
-  const fundingOrganisationIds =
-    "fundingOrganisationIds" in context
-      ? context.fundingOrganisationIds
-      : context.internalUser.fundingUsers.map(
-          (membership) => membership.fundingOrganisationId
-        );
+  const fundingOrganisationIds = context.fundingOrganisationIds;
 
   if (context.authContext.role === "super_admin") {
     return apiSuccess(
@@ -63,12 +58,7 @@ export async function POST(request: Request) {
     return context.error;
   }
 
-  const fundingOrganisationIds =
-    "fundingOrganisationIds" in context
-      ? context.fundingOrganisationIds
-      : context.internalUser.fundingUsers.map(
-          (membership) => membership.fundingOrganisationId
-        );
+  const fundingOrganisationIds = context.fundingOrganisationIds;
 
   try {
     const input = createAssessmentSchema.parse(

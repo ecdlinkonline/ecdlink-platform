@@ -15,7 +15,7 @@ export async function getAuthContext(): Promise<AuthContext | null> {
 
   if (clerkSession.isAuthenticated) {
     const user = await currentUser();
-    const metadataRole = user?.publicMetadata.role ?? user?.unsafeMetadata.role;
+    const metadataRole = user?.publicMetadata.role;
     const role = isUserRole(metadataRole) ? metadataRole : null;
 
     return {
