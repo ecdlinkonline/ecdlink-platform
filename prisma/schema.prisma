@@ -256,6 +256,159 @@ enum FundingChecklistStatus {
   WAIVED
 }
 
+enum GrantAwardStatus {
+  DRAFT
+  ACTIVE
+  SUSPENDED
+  COMPLETED
+  CANCELLED
+  ARCHIVED
+}
+
+enum GrantAwardSourceType {
+  FUNDING_APPLICATION
+  SPONSORSHIP_COMMITMENT
+  MANUAL
+}
+
+enum GrantAwardOrganisationType {
+  FUNDING_ORGANISATION
+  DONOR_ORGANISATION
+}
+
+enum GrantAwardOrganisationRole {
+  LEAD_FUNDER
+  CO_FUNDER
+  IMPLEMENTATION_PARTNER
+  OVERSIGHT_PARTNER
+}
+
+enum GrantAwardAccessRole {
+  VIEWER
+  PREPARER
+  REVIEWER
+  APPROVER
+  ADMINISTRATOR
+}
+
+enum GrantAwardPermission {
+  REPORT_READ
+  REPORT_PREPARE
+  REPORT_SUBMIT
+  REPORT_REVIEW
+  REPORT_RETURN
+  REPORT_APPROVE
+  DOCUMENT_READ
+  DOCUMENT_UPLOAD
+  FINANCIAL_READ
+}
+
+enum GrantObligationType {
+  INTERIM
+  FINAL
+  QUARTERLY_EXPENDITURE
+  QUARTERLY_CASH_FLOW
+  CUSTOM
+}
+
+enum GrantObligationBasis {
+  QUARTER
+  TRANCHE
+  PERIOD
+  FINAL
+  CUSTOM
+}
+
+enum GrantObligationStatus {
+  PENDING
+  OPEN
+  SUBMITTED
+  OVERDUE
+  SATISFIED
+  WAIVED
+  CANCELLED
+  ARCHIVED
+}
+
+enum GrantReportStatus {
+  DRAFT
+  SUBMITTED
+  RETURNED
+  APPROVED
+  ARCHIVED
+}
+
+enum GrantReportVersionStatus {
+  DRAFT
+  SUBMITTED
+  RETURNED
+  APPROVED
+  SUPERSEDED
+  ARCHIVED
+}
+
+enum GrantFinancialLineType {
+  FUNDING_RECEIVED
+  OTHER_INCOME
+  EXPENDITURE
+  BUDGET
+  BALANCE
+  ADJUSTMENT
+}
+
+enum GrantIndicatorStatus {
+  NOT_STARTED
+  ON_TRACK
+  AT_RISK
+  DELAYED
+  COMPLETED
+  NOT_APPLICABLE
+}
+
+enum GrantReportDocumentType {
+  INVOICE
+  BANK_STATEMENT
+  PROOF_OF_PAYMENT
+  RECEIPT
+  PROCUREMENT_EVIDENCE
+  INDICATOR_EVIDENCE
+  BENEFICIARY_EVIDENCE
+  SIGNED_REPORT
+  OTHER
+}
+
+enum GrantReviewDecision {
+  COMMENT
+  RETURNED
+  APPROVED
+}
+
+enum GrantReviewStage {
+  FUNDER
+  SUPER_ADMIN
+  OTHER
+}
+
+enum GrantExpenseSourceType {
+  PROCUREMENT_ORDER_ITEM
+  PROCUREMENT_INVOICE
+  SUPPLIER_INVOICE
+  MANUAL
+}
+
+enum FundingOrganisationUserRole {
+  MEMBER
+  REVIEWER
+  APPROVER
+  ADMINISTRATOR
+}
+
+enum FundingOrganisationUserStatus {
+  ACTIVE
+  SUSPENDED
+  REMOVED
+}
+
 enum SupplierUserRole {
   OWNER
   ADMINISTRATOR
@@ -361,45 +514,62 @@ enum IntelligenceDraftStatus {
 }
 
 model User {
-  id                          String                         @id @default(cuid())
-  clerkUserId                 String                         @unique
-  email                       String?
-  firstName                   String?
-  lastName                    String?
-  phone                       String?
-  role                        UserRole
-  roleId                      String?
-  status                      UserStatus                     @default(ACTIVE)
-  lastLoginAt                 DateTime?
-  createdAt                   DateTime                       @default(now())
-  updatedAt                   DateTime                       @updatedAt
-  roleRecord                  Role?                          @relation(fields: [roleId], references: [id])
-  centreUsers                 CentreUser[]
-  supplierUsers               SupplierUser[]
-  donorUsers                  DonorUser[]
-  fundingUsers                FundingOrganisationUser[]
-  ecdlinkStaffProfile         EcdlinkStaffProfile?
-  assignedStaffCentres        EcdlinkStaffCentreAssignment[] @relation("StaffCentreAssignmentsAssignedBy")
-  sessions                    Session[]
-  sentInvitations             Invitation[]                   @relation("InvitationSender")
-  acceptedInvitations         Invitation[]                   @relation("InvitationAcceptedUser")
-  uploadedFiles               FileAsset[]                    @relation("UploadedFiles")
-  submittedDocuments          ComplianceDocument[]           @relation("SubmittedComplianceDocuments")
-  verifiedDocuments           ComplianceDocument[]           @relation("VerifiedDocuments")
-  rejectedDocuments           ComplianceDocument[]           @relation("RejectedComplianceDocuments")
-  auditLogs                   AuditLog[]
-  receivedNotifications       Notification[]                 @relation("ReceivedNotifications")
-  createdNotifications        Notification[]                 @relation("CreatedNotifications")
-  notificationPreferences     NotificationPreference[]
-  fundingReviewerNotes        FundingReviewerNote[]           @relation("FundingReviewerNotes")
+  id                            String                         @id @default(cuid())
+  clerkUserId                   String                         @unique
+  email                         String?
+  firstName                     String?
+  lastName                      String?
+  phone                         String?
+  role                          UserRole
+  roleId                        String?
+  status                        UserStatus                     @default(ACTIVE)
+  lastLoginAt                   DateTime?
+  createdAt                     DateTime                       @default(now())
+  updatedAt                     DateTime                       @updatedAt
+  roleRecord                    Role?                          @relation(fields: [roleId], references: [id])
+  centreUsers                   CentreUser[]
+  supplierUsers                 SupplierUser[]
+  donorUsers                    DonorUser[]
+  fundingUsers                  FundingOrganisationUser[]
+  ecdlinkStaffProfile           EcdlinkStaffProfile?
+  assignedStaffCentres          EcdlinkStaffCentreAssignment[] @relation("StaffCentreAssignmentsAssignedBy")
+  sessions                      Session[]
+  sentInvitations               Invitation[]                   @relation("InvitationSender")
+  acceptedInvitations           Invitation[]                   @relation("InvitationAcceptedUser")
+  uploadedFiles                 FileAsset[]                    @relation("UploadedFiles")
+  submittedDocuments            ComplianceDocument[]           @relation("SubmittedComplianceDocuments")
+  verifiedDocuments             ComplianceDocument[]           @relation("VerifiedDocuments")
+  rejectedDocuments             ComplianceDocument[]           @relation("RejectedComplianceDocuments")
+  auditLogs                     AuditLog[]
+  receivedNotifications         Notification[]                 @relation("ReceivedNotifications")
+  createdNotifications          Notification[]                 @relation("CreatedNotifications")
+  notificationPreferences       NotificationPreference[]
+  fundingReviewerNotes          FundingReviewerNote[]          @relation("FundingReviewerNotes")
   fundingCommunicationsAuthored FundingCommunication[]         @relation("FundingCommunicationsAuthored")
   fundingCommunicationsReceived FundingCommunication[]         @relation("FundingCommunicationsReceived")
-  sentMessages                Message[]                      @relation("SentMessages")
-  membershipPayments          MembershipPayment[]
-  intelligenceQueries         IntelligenceQuery[]
-  intelligenceRecommendations IntelligenceRecommendation[]
-  intelligenceProposalDrafts  IntelligenceProposalDraft[]
-  intelligenceBudgetDrafts    IntelligenceBudgetDraft[]
+  sentMessages                  Message[]                      @relation("SentMessages")
+  membershipPayments            MembershipPayment[]
+  intelligenceQueries           IntelligenceQuery[]
+  intelligenceRecommendations   IntelligenceRecommendation[]
+  intelligenceProposalDrafts    IntelligenceProposalDraft[]
+  intelligenceBudgetDrafts      IntelligenceBudgetDraft[]
+  grantAwardsConfirmed          GrantAward[]                   @relation("GrantAwardsConfirmedBy")
+  grantAwardOrganisationsAdded  GrantAwardOrganisation[]       @relation("GrantAwardOrganisationsAddedBy")
+  grantAwardAccesses            GrantAwardAccess[]             @relation("GrantAwardAccessUsers")
+  grantAwardAccessesGranted     GrantAwardAccess[]             @relation("GrantAwardAccessGrantedBy")
+  grantAwardAccessesRevoked     GrantAwardAccess[]             @relation("GrantAwardAccessRevokedBy")
+  grantTranchesCreated          GrantTranche[]                 @relation("GrantTranchesCreatedBy")
+  grantDisbursementsRecorded    GrantDisbursement[]            @relation("GrantDisbursementsRecordedBy")
+  grantObligationsCreated       GrantReportingObligation[]     @relation("GrantObligationsCreatedBy")
+  grantObligationsWaived        GrantReportingObligation[]     @relation("GrantObligationsWaivedBy")
+  grantReportsCreated           GrantReport[]                  @relation("GrantReportsCreatedBy")
+  grantReportsArchived          GrantReport[]                  @relation("GrantReportsArchivedBy")
+  grantReportVersionsPrepared   GrantReportVersion[]           @relation("GrantReportVersionsPreparedBy")
+  grantReportVersionsSubmitted  GrantReportVersion[]           @relation("GrantReportVersionsSubmittedBy")
+  grantReportDocumentsUploaded  GrantReportDocument[]          @relation("GrantReportDocumentsUploadedBy")
+  grantReportReviews            GrantReportReview[]            @relation("GrantReportReviewsByUser")
+  grantExpenseAllocations       GrantExpenseAllocation[]       @relation("GrantExpenseAllocationsByUser")
+  grantExpenseReversals         GrantExpenseAllocation[]       @relation("GrantExpenseAllocationReversals")
 
   @@index([email])
   @@index([role, status])
@@ -537,6 +707,7 @@ model EcdCentre {
   intelligenceBudgetDrafts    IntelligenceBudgetDraft[]
   invitations                 Invitation[]
   staffAssignments            EcdlinkStaffCentreAssignment[]
+  grantAwards                 GrantAward[]
 
   @@index([slug])
   @@index([area, region, province])
@@ -776,6 +947,7 @@ model FundingProject {
   budgets                  Budget[]
   proposals                FundingProposal[]
   impactProjects           ImpactProject[]
+  grantAwards              GrantAward[]
 
   @@index([status, opportunityType])
 }
@@ -809,28 +981,29 @@ model FundingApplication {
   reminders                  FundingReminder[]
   reviewerNotes              FundingReviewerNote[]
   communications             FundingCommunication[]
+  grantAward                 GrantAward?
 
   @@index([status, submittedAt])
   @@index([fundingCallId])
 }
 
 model FundingReviewerNote {
-  id            String   @id @default(cuid())
+  id            String             @id @default(cuid())
   applicationId String
   authorUserId  String
   body          String
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
   deletedAt     DateTime?
   application   FundingApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
-  author        User @relation("FundingReviewerNotes", fields: [authorUserId], references: [id], onDelete: Restrict)
+  author        User               @relation("FundingReviewerNotes", fields: [authorUserId], references: [id], onDelete: Restrict)
 
   @@index([applicationId, deletedAt, createdAt])
   @@index([authorUserId, createdAt])
 }
 
 model FundingCommunication {
-  id              String @id @default(cuid())
+  id              String                   @id @default(cuid())
   applicationId   String
   type            FundingCommunicationType
   authorUserId    String?
@@ -838,11 +1011,11 @@ model FundingCommunication {
   title           String
   body            String
   metadata        Json?
-  sourceEventKey  String? @unique
-  createdAt       DateTime @default(now())
-  application     FundingApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
-  author          User? @relation("FundingCommunicationsAuthored", fields: [authorUserId], references: [id], onDelete: SetNull)
-  recipient       User? @relation("FundingCommunicationsReceived", fields: [recipientUserId], references: [id], onDelete: SetNull)
+  sourceEventKey  String?                  @unique
+  createdAt       DateTime                 @default(now())
+  application     FundingApplication       @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  author          User?                    @relation("FundingCommunicationsAuthored", fields: [authorUserId], references: [id], onDelete: SetNull)
+  recipient       User?                    @relation("FundingCommunicationsReceived", fields: [recipientUserId], references: [id], onDelete: SetNull)
 
   @@index([applicationId, createdAt])
   @@index([recipientUserId, createdAt])
@@ -1233,30 +1406,31 @@ model SupplierOrderItem {
 }
 
 model SupplierInvoice {
-  id                       String            @id @default(cuid())
-  invoiceNumber            String            @unique
+  id                       String                   @id @default(cuid())
+  invoiceNumber            String                   @unique
   supplierId               String
   procurementCycleId       String?
   supplierOrderId          String?
   invoiceDate              DateTime
   dueDate                  DateTime?
-  subtotal                 Decimal           @db.Decimal(12, 2)
-  vatAmount                Decimal           @default(0) @db.Decimal(12, 2)
-  deliveryFee              Decimal           @default(0) @db.Decimal(12, 2)
-  totalAmount              Decimal           @db.Decimal(12, 2)
-  amountPaid               Decimal           @default(0) @db.Decimal(12, 2)
-  outstandingAmount        Decimal           @db.Decimal(12, 2)
-  paymentStatus            String            @default("Not Paid")
+  subtotal                 Decimal                  @db.Decimal(12, 2)
+  vatAmount                Decimal                  @default(0) @db.Decimal(12, 2)
+  deliveryFee              Decimal                  @default(0) @db.Decimal(12, 2)
+  totalAmount              Decimal                  @db.Decimal(12, 2)
+  amountPaid               Decimal                  @default(0) @db.Decimal(12, 2)
+  outstandingAmount        Decimal                  @db.Decimal(12, 2)
+  paymentStatus            String                   @default("Not Paid")
   externalInvoiceReference String?
   fileAssetId              String?
   notes                    String?
-  createdAt                DateTime          @default(now())
-  updatedAt                DateTime          @updatedAt
-  supplier                 Supplier          @relation(fields: [supplierId], references: [id], onDelete: Cascade)
-  cycle                    ProcurementCycle? @relation(fields: [procurementCycleId], references: [id])
-  supplierOrder            SupplierOrder?    @relation(fields: [supplierOrderId], references: [id])
-  file                     FileAsset?        @relation(fields: [fileAssetId], references: [id])
+  createdAt                DateTime                 @default(now())
+  updatedAt                DateTime                 @updatedAt
+  supplier                 Supplier                 @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  cycle                    ProcurementCycle?        @relation(fields: [procurementCycleId], references: [id])
+  supplierOrder            SupplierOrder?           @relation(fields: [supplierOrderId], references: [id])
+  file                     FileAsset?               @relation(fields: [fileAssetId], references: [id])
   payments                 SupplierPayment[]
+  grantExpenseAllocations  GrantExpenseAllocation[]
 
   @@index([supplierId, paymentStatus])
 }
@@ -1364,31 +1538,33 @@ model ProcurementOrder {
 }
 
 model ProcurementOrderItem {
-  id                   String           @id @default(cuid())
-  orderId              String
-  productId            String?
-  unitPrice            Decimal          @db.Decimal(12, 2)
-  quantity             Int
-  lineTotal            Decimal          @db.Decimal(12, 2)
-  productNameSnapshot  String
-  packSizeSnapshot     String?
-  brandSnapshot        String?
-  supplierNameSnapshot String?
-  order                ProcurementOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  product              Product?         @relation(fields: [productId], references: [id])
+  id                      String                   @id @default(cuid())
+  orderId                 String
+  productId               String?
+  unitPrice               Decimal                  @db.Decimal(12, 2)
+  quantity                Int
+  lineTotal               Decimal                  @db.Decimal(12, 2)
+  productNameSnapshot     String
+  packSizeSnapshot        String?
+  brandSnapshot           String?
+  supplierNameSnapshot    String?
+  order                   ProcurementOrder         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product                 Product?                 @relation(fields: [productId], references: [id])
+  grantExpenseAllocations GrantExpenseAllocation[]
 }
 
 model Invoice {
-  id        String            @id @default(cuid())
-  invoiceNo String            @unique
-  orderId   String?
-  amount    Decimal           @db.Decimal(12, 2)
-  status    InvoiceStatus     @default(GENERATED)
-  issuedAt  DateTime          @default(now())
-  dueAt     DateTime?
-  fileId    String?
-  order     ProcurementOrder? @relation(fields: [orderId], references: [id])
-  file      FileAsset?        @relation(fields: [fileId], references: [id])
+  id                      String                   @id @default(cuid())
+  invoiceNo               String                   @unique
+  orderId                 String?
+  amount                  Decimal                  @db.Decimal(12, 2)
+  status                  InvoiceStatus            @default(GENERATED)
+  issuedAt                DateTime                 @default(now())
+  dueAt                   DateTime?
+  fileId                  String?
+  order                   ProcurementOrder?        @relation(fields: [orderId], references: [id])
+  file                    FileAsset?               @relation(fields: [fileId], references: [id])
+  grantExpenseAllocations GrantExpenseAllocation[]
 }
 
 model Delivery {
@@ -1484,6 +1660,7 @@ model DonorOrganisation {
   messageThreads              MessageThread[]
   intelligenceInsights        IntelligenceInsight[]
   intelligenceRecommendations IntelligenceRecommendation[]
+  grantAwardOrganisations     GrantAwardOrganisation[]
 
   @@index([status, verificationStatus])
   @@index([type])
@@ -1674,6 +1851,7 @@ model SponsorshipCommitment {
   donor                  DonorOrganisation   @relation(fields: [donorOrganisationId], references: [id], onDelete: Cascade)
   centre                 EcdCentre           @relation(fields: [centreId], references: [id])
   project                ImpactProject?      @relation(fields: [impactProjectId], references: [id])
+  grantAward             GrantAward?
 
   @@index([donorOrganisationId, commitmentStatus])
 }
@@ -1744,17 +1922,25 @@ model FundingOrganisation {
   applications                FundingApplication[]
   intelligenceInsights        IntelligenceInsight[]
   intelligenceRecommendations IntelligenceRecommendation[]
+  grantAwardOrganisations     GrantAwardOrganisation[]
 }
 
 model FundingOrganisationUser {
-  id                    String              @id @default(cuid())
+  id                    String                        @id @default(cuid())
   fundingOrganisationId String
   userId                String
-  isPrimary             Boolean             @default(false)
-  organisation          FundingOrganisation @relation(fields: [fundingOrganisationId], references: [id], onDelete: Cascade)
-  user                  User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role                  FundingOrganisationUserRole   @default(MEMBER)
+  status                FundingOrganisationUserStatus @default(ACTIVE)
+  permissions           GrantAwardPermission[]        @default([])
+  isPrimary             Boolean                       @default(false)
+  joinedAt              DateTime                      @default(now())
+  removedAt             DateTime?
+  organisation          FundingOrganisation           @relation(fields: [fundingOrganisationId], references: [id], onDelete: Cascade)
+  user                  User                          @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([fundingOrganisationId, userId])
+  @@index([userId, status])
+  @@index([fundingOrganisationId, status, role])
 }
 
 model FundingCall {
@@ -1811,6 +1997,406 @@ model FundingAssessment {
   application           FundingApplication? @relation(fields: [fundingApplicationId], references: [id])
 }
 
+model GrantAward {
+  id                      String                     @id @default(cuid())
+  centreId                String
+  fundingProjectId        String
+  sourceType              GrantAwardSourceType
+  fundingApplicationId    String?                    @unique
+  sponsorshipCommitmentId String?                    @unique
+  awardNumber             String                     @unique
+  title                   String
+  description             String?
+  currency                String                     @default("ZAR")
+  awardedAmount           Decimal                    @db.Decimal(14, 2)
+  startDate               DateTime
+  endDate                 DateTime?
+  status                  GrantAwardStatus           @default(DRAFT)
+  confirmedByUserId       String
+  confirmedAt             DateTime                   @default(now())
+  suspendedAt             DateTime?
+  completedAt             DateTime?
+  cancelledAt             DateTime?
+  archivedAt              DateTime?
+  cancellationReason      String?
+  createdAt               DateTime                   @default(now())
+  updatedAt               DateTime                   @updatedAt
+  centre                  EcdCentre                  @relation(fields: [centreId], references: [id], onDelete: Restrict)
+  fundingProject          FundingProject             @relation(fields: [fundingProjectId], references: [id], onDelete: Restrict)
+  fundingApplication      FundingApplication?        @relation(fields: [fundingApplicationId], references: [id], onDelete: Restrict)
+  sponsorshipCommitment   SponsorshipCommitment?     @relation(fields: [sponsorshipCommitmentId], references: [id], onDelete: Restrict)
+  confirmedBy             User                       @relation("GrantAwardsConfirmedBy", fields: [confirmedByUserId], references: [id], onDelete: Restrict)
+  organisations           GrantAwardOrganisation[]
+  explicitAccess          GrantAwardAccess[]
+  tranches                GrantTranche[]
+  disbursements           GrantDisbursement[]
+  obligations             GrantReportingObligation[]
+  reports                 GrantReport[]
+  expenseAllocations      GrantExpenseAllocation[]
+
+  @@index([centreId, status])
+  @@index([fundingProjectId, status])
+  @@index([status, startDate, endDate])
+  @@index([confirmedByUserId, confirmedAt])
+}
+
+model GrantAwardOrganisation {
+  id                    String                     @id @default(cuid())
+  grantAwardId          String
+  organisationType      GrantAwardOrganisationType
+  fundingOrganisationId String?
+  donorOrganisationId   String?
+  role                  GrantAwardOrganisationRole
+  isPrimary             Boolean                    @default(false)
+  canReview             Boolean                    @default(true)
+  canApprove            Boolean                    @default(false)
+  addedByUserId         String
+  addedAt               DateTime                   @default(now())
+  removedAt             DateTime?
+  award                 GrantAward                 @relation(fields: [grantAwardId], references: [id], onDelete: Restrict)
+  fundingOrganisation   FundingOrganisation?       @relation(fields: [fundingOrganisationId], references: [id], onDelete: Restrict)
+  donorOrganisation     DonorOrganisation?         @relation(fields: [donorOrganisationId], references: [id], onDelete: Restrict)
+  addedBy               User                       @relation("GrantAwardOrganisationsAddedBy", fields: [addedByUserId], references: [id], onDelete: Restrict)
+  reviews               GrantReportReview[]
+
+  @@unique([grantAwardId, fundingOrganisationId])
+  @@unique([grantAwardId, donorOrganisationId])
+  @@index([fundingOrganisationId, grantAwardId])
+  @@index([donorOrganisationId, grantAwardId])
+  @@index([grantAwardId, role, removedAt])
+}
+
+model GrantAwardAccess {
+  id              String                 @id @default(cuid())
+  grantAwardId    String
+  userId          String
+  role            GrantAwardAccessRole
+  permissions     GrantAwardPermission[] @default([])
+  grantedByUserId String
+  grantedAt       DateTime               @default(now())
+  expiresAt       DateTime?
+  revokedAt       DateTime?
+  revokedByUserId String?
+  award           GrantAward             @relation(fields: [grantAwardId], references: [id], onDelete: Restrict)
+  user            User                   @relation("GrantAwardAccessUsers", fields: [userId], references: [id], onDelete: Restrict)
+  grantedBy       User                   @relation("GrantAwardAccessGrantedBy", fields: [grantedByUserId], references: [id], onDelete: Restrict)
+  revokedBy       User?                  @relation("GrantAwardAccessRevokedBy", fields: [revokedByUserId], references: [id], onDelete: Restrict)
+
+  @@unique([grantAwardId, userId])
+  @@index([userId, revokedAt, expiresAt])
+  @@index([grantAwardId, role, revokedAt])
+}
+
+model GrantTranche {
+  id              String                     @id @default(cuid())
+  grantAwardId    String
+  trancheNumber   Int
+  title           String?
+  scheduledAmount Decimal                    @db.Decimal(14, 2)
+  scheduledDate   DateTime?
+  conditions      String?
+  notes           String?
+  createdByUserId String
+  createdAt       DateTime                   @default(now())
+  updatedAt       DateTime                   @updatedAt
+  award           GrantAward                 @relation(fields: [grantAwardId], references: [id], onDelete: Restrict)
+  createdBy       User                       @relation("GrantTranchesCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  disbursements   GrantDisbursement[]
+  obligations     GrantReportingObligation[]
+
+  @@unique([grantAwardId, trancheNumber])
+  @@index([grantAwardId, scheduledDate])
+}
+
+model GrantDisbursement {
+  id                  String        @id @default(cuid())
+  grantAwardId        String
+  grantTrancheId      String?
+  amountReceived      Decimal       @db.Decimal(14, 2)
+  receivedAt          DateTime
+  reference           String?
+  notes               String?
+  evidenceFileAssetId String?
+  recordedByUserId    String
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+  award               GrantAward    @relation(fields: [grantAwardId], references: [id], onDelete: Restrict)
+  tranche             GrantTranche? @relation(fields: [grantTrancheId], references: [id], onDelete: Restrict)
+  evidenceFile        FileAsset?    @relation("GrantDisbursementEvidence", fields: [evidenceFileAssetId], references: [id], onDelete: Restrict)
+  recordedBy          User          @relation("GrantDisbursementsRecordedBy", fields: [recordedByUserId], references: [id], onDelete: Restrict)
+
+  @@index([grantAwardId, receivedAt])
+  @@index([grantTrancheId, receivedAt])
+  @@index([reference])
+}
+
+model GrantReportingObligation {
+  id                         String                @id @default(cuid())
+  grantAwardId               String
+  grantTrancheId             String?
+  type                       GrantObligationType
+  basis                      GrantObligationBasis
+  title                      String
+  description                String?
+  reportingPeriodStart       DateTime?
+  reportingPeriodEnd         DateTime?
+  financialYear              String?
+  quarter                    Int?
+  dueAt                      DateTime
+  status                     GrantObligationStatus @default(PENDING)
+  customRequirements         String?
+  requiresFunderApproval     Boolean               @default(true)
+  requiresSuperAdminApproval Boolean               @default(false)
+  createdByUserId            String
+  waivedByUserId             String?
+  waivedAt                   DateTime?
+  waiverReason               String?
+  createdAt                  DateTime              @default(now())
+  updatedAt                  DateTime              @updatedAt
+  award                      GrantAward            @relation(fields: [grantAwardId], references: [id], onDelete: Restrict)
+  tranche                    GrantTranche?         @relation(fields: [grantTrancheId], references: [id], onDelete: Restrict)
+  createdBy                  User                  @relation("GrantObligationsCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  waivedBy                   User?                 @relation("GrantObligationsWaivedBy", fields: [waivedByUserId], references: [id], onDelete: Restrict)
+  report                     GrantReport?
+
+  @@index([grantAwardId, status, dueAt])
+  @@index([grantTrancheId])
+  @@index([type, status, dueAt])
+  @@index([financialYear, quarter])
+}
+
+model GrantReport {
+  id                   String                   @id @default(cuid())
+  grantAwardId         String
+  obligationId         String                   @unique
+  status               GrantReportStatus        @default(DRAFT)
+  currentVersionNumber Int                      @default(1)
+  createdByUserId      String
+  archivedByUserId     String?
+  archivedAt           DateTime?
+  createdAt            DateTime                 @default(now())
+  updatedAt            DateTime                 @updatedAt
+  award                GrantAward               @relation(fields: [grantAwardId], references: [id], onDelete: Restrict)
+  obligation           GrantReportingObligation @relation(fields: [obligationId], references: [id], onDelete: Restrict)
+  createdBy            User                     @relation("GrantReportsCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  archivedBy           User?                    @relation("GrantReportsArchivedBy", fields: [archivedByUserId], references: [id], onDelete: Restrict)
+  versions             GrantReportVersion[]
+
+  @@index([grantAwardId, status, updatedAt])
+  @@index([status, createdAt])
+  @@index([createdByUserId, createdAt])
+}
+
+model GrantReportVersion {
+  id                          String                     @id @default(cuid())
+  grantReportId               String
+  versionNumber               Int
+  status                      GrantReportVersionStatus   @default(DRAFT)
+  reportType                  GrantObligationType
+  reportingPeriodStart        DateTime?
+  reportingPeriodEnd          DateTime?
+  financialYear               String?
+  quarter                     Int?
+  trancheNumberSnapshot       Int?
+  trancheAmountSnapshot       Decimal?                   @db.Decimal(14, 2)
+  previousTrancheBalance      Decimal?                   @db.Decimal(14, 2)
+  currency                    String                     @default("ZAR")
+  fundingReceivedTotal        Decimal                    @default(0) @db.Decimal(14, 2)
+  otherIncomeTotal            Decimal                    @default(0) @db.Decimal(14, 2)
+  totalIncome                 Decimal                    @default(0) @db.Decimal(14, 2)
+  quarterlyExpenditureTotal   Decimal                    @default(0) @db.Decimal(14, 2)
+  cumulativeExpenditureTotal  Decimal                    @default(0) @db.Decimal(14, 2)
+  totalExpenditure            Decimal                    @default(0) @db.Decimal(14, 2)
+  surplusDeficit              Decimal                    @default(0) @db.Decimal(14, 2)
+  openingBankBalance          Decimal?                   @db.Decimal(14, 2)
+  closingBankBalance          Decimal?                   @db.Decimal(14, 2)
+  executiveSummary            String?
+  objectivesNarrative         String?
+  deliverablesNarrative       String?
+  challenges                  String?
+  lessonsLearned              String?
+  nextSteps                   String?
+  financialNarrative          String?
+  centreSnapshot              Json?
+  fundingOrganisationSnapshot Json?
+  awardSnapshot               Json?
+  projectSnapshot             Json?
+  trancheSnapshot             Json?
+  preparedByUserId            String
+  preparerNameSnapshot        String
+  preparerDesignationSnapshot String
+  certificationAcknowledged   Boolean                    @default(false)
+  certificationTextSnapshot   String?
+  submittedByUserId           String?
+  submittedAt                 DateTime?
+  returnedAt                  DateTime?
+  approvedAt                  DateTime?
+  archivedAt                  DateTime?
+  createdAt                   DateTime                   @default(now())
+  updatedAt                   DateTime                   @updatedAt
+  report                      GrantReport                @relation(fields: [grantReportId], references: [id], onDelete: Restrict)
+  preparedBy                  User                       @relation("GrantReportVersionsPreparedBy", fields: [preparedByUserId], references: [id], onDelete: Restrict)
+  submittedBy                 User?                      @relation("GrantReportVersionsSubmittedBy", fields: [submittedByUserId], references: [id], onDelete: Restrict)
+  financialLines              GrantReportFinancialLine[]
+  indicators                  GrantReportIndicator[]
+  documents                   GrantReportDocument[]
+  reviews                     GrantReportReview[]
+  expenseEntries              GrantReportExpenseEntry[]
+
+  @@unique([grantReportId, versionNumber])
+  @@index([grantReportId, status])
+  @@index([submittedByUserId, submittedAt])
+  @@index([status, submittedAt])
+}
+
+model GrantReportFinancialLine {
+  id                   String                    @id @default(cuid())
+  grantReportVersionId String
+  lineType             GrantFinancialLineType
+  categoryCode         String?
+  categoryName         String
+  description          String?
+  displayOrder         Int                       @default(0)
+  approvedBudget       Decimal?                  @db.Decimal(14, 2)
+  quarterlyBudget      Decimal?                  @db.Decimal(14, 2)
+  quarterlyActual      Decimal?                  @db.Decimal(14, 2)
+  cumulativeActual     Decimal?                  @db.Decimal(14, 2)
+  estimatedExpenditure Decimal?                  @db.Decimal(14, 2)
+  variance             Decimal?                  @db.Decimal(14, 2)
+  reasonForVariance    String?
+  notes                String?
+  createdAt            DateTime                  @default(now())
+  updatedAt            DateTime                  @updatedAt
+  version              GrantReportVersion        @relation(fields: [grantReportVersionId], references: [id], onDelete: Cascade)
+  documents            GrantReportDocument[]
+  expenseEntries       GrantReportExpenseEntry[]
+
+  @@index([grantReportVersionId, lineType, displayOrder])
+  @@index([categoryCode])
+}
+
+model GrantReportIndicator {
+  id                   String                @id @default(cuid())
+  grantReportVersionId String
+  objective            String
+  deliverable          String?
+  indicator            String
+  baseline             String?
+  target               String?
+  achieved             String?
+  status               GrantIndicatorStatus  @default(NOT_STARTED)
+  progressNarrative    String?
+  meansOfVerification  String?
+  displayOrder         Int                   @default(0)
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+  version              GrantReportVersion    @relation(fields: [grantReportVersionId], references: [id], onDelete: Cascade)
+  documents            GrantReportDocument[]
+
+  @@index([grantReportVersionId, status, displayOrder])
+}
+
+model GrantReportDocument {
+  id                       String                    @id @default(cuid())
+  grantReportVersionId     String
+  indicatorId              String?
+  financialLineId          String?
+  fileAssetId              String
+  documentType             GrantReportDocumentType
+  title                    String
+  description              String?
+  originalFilenameSnapshot String
+  mimeTypeSnapshot         String
+  fileSizeSnapshot         Int
+  checksumSnapshot         String?
+  uploadedByUserId         String
+  uploadedAt               DateTime                  @default(now())
+  createdAt                DateTime                  @default(now())
+  version                  GrantReportVersion        @relation(fields: [grantReportVersionId], references: [id], onDelete: Cascade)
+  indicator                GrantReportIndicator?     @relation(fields: [indicatorId], references: [id], onDelete: Restrict)
+  financialLine            GrantReportFinancialLine? @relation(fields: [financialLineId], references: [id], onDelete: Restrict)
+  file                     FileAsset                 @relation("GrantReportDocuments", fields: [fileAssetId], references: [id], onDelete: Restrict)
+  uploadedBy               User                      @relation("GrantReportDocumentsUploadedBy", fields: [uploadedByUserId], references: [id], onDelete: Restrict)
+
+  @@index([grantReportVersionId, documentType])
+  @@index([indicatorId])
+  @@index([financialLineId])
+  @@index([fileAssetId])
+}
+
+model GrantReportReview {
+  id                       String                  @id @default(cuid())
+  grantReportVersionId     String
+  reviewerUserId           String
+  grantAwardOrganisationId String?
+  stage                    GrantReviewStage
+  stageSequence            Int                     @default(1)
+  decision                 GrantReviewDecision
+  notes                    String?
+  createdAt                DateTime                @default(now())
+  version                  GrantReportVersion      @relation(fields: [grantReportVersionId], references: [id], onDelete: Restrict)
+  reviewer                 User                    @relation("GrantReportReviewsByUser", fields: [reviewerUserId], references: [id], onDelete: Restrict)
+  awardOrganisation        GrantAwardOrganisation? @relation(fields: [grantAwardOrganisationId], references: [id], onDelete: Restrict)
+
+  @@index([grantReportVersionId, stage, stageSequence])
+  @@index([reviewerUserId, createdAt])
+  @@index([grantAwardOrganisationId, createdAt])
+}
+
+model GrantExpenseAllocation {
+  id                     String                    @id @default(cuid())
+  grantAwardId           String
+  sourceType             GrantExpenseSourceType
+  procurementOrderItemId String?
+  invoiceId              String?
+  supplierInvoiceId      String?
+  manualReference        String?
+  allocatedAmount        Decimal                   @db.Decimal(14, 2)
+  allocationDate         DateTime
+  description            String?
+  allocatedByUserId      String
+  reversedAt             DateTime?
+  reversedByUserId       String?
+  reversalReason         String?
+  createdAt              DateTime                  @default(now())
+  updatedAt              DateTime                  @updatedAt
+  award                  GrantAward                @relation(fields: [grantAwardId], references: [id], onDelete: Restrict)
+  procurementOrderItem   ProcurementOrderItem?     @relation(fields: [procurementOrderItemId], references: [id], onDelete: Restrict)
+  invoice                Invoice?                  @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+  supplierInvoice        SupplierInvoice?          @relation(fields: [supplierInvoiceId], references: [id], onDelete: Restrict)
+  allocatedBy            User                      @relation("GrantExpenseAllocationsByUser", fields: [allocatedByUserId], references: [id], onDelete: Restrict)
+  reversedBy             User?                     @relation("GrantExpenseAllocationReversals", fields: [reversedByUserId], references: [id], onDelete: Restrict)
+  reportEntries          GrantReportExpenseEntry[]
+
+  @@unique([grantAwardId, procurementOrderItemId])
+  @@unique([grantAwardId, invoiceId])
+  @@unique([grantAwardId, supplierInvoiceId])
+  @@index([grantAwardId, allocationDate])
+  @@index([procurementOrderItemId])
+  @@index([invoiceId])
+  @@index([supplierInvoiceId])
+}
+
+model GrantReportExpenseEntry {
+  id                       String                   @id @default(cuid())
+  grantReportVersionId     String
+  financialLineId          String
+  grantExpenseAllocationId String?
+  sourceTypeSnapshot       GrantExpenseSourceType
+  sourceReferenceSnapshot  String?
+  descriptionSnapshot      String?
+  expenseDateSnapshot      DateTime?
+  allocatedAmountSnapshot  Decimal                  @db.Decimal(14, 2)
+  createdAt                DateTime                 @default(now())
+  version                  GrantReportVersion       @relation(fields: [grantReportVersionId], references: [id], onDelete: Cascade)
+  financialLine            GrantReportFinancialLine @relation(fields: [financialLineId], references: [id], onDelete: Cascade)
+  allocation               GrantExpenseAllocation?  @relation(fields: [grantExpenseAllocationId], references: [id], onDelete: Restrict)
+
+  @@index([grantReportVersionId])
+  @@index([financialLineId])
+  @@index([grantExpenseAllocationId])
+}
+
 model Notification {
   id              String             @id @default(cuid())
   userId          String?
@@ -1821,15 +2407,15 @@ model Notification {
   type            NotificationType   @default(PLATFORM_GENERAL)
   title           String
   body            String
-  href             String?
-  metadata         Json?
-  inAppVisible     Boolean            @default(true)
-  readAt           DateTime?
-  createdAt        DateTime           @default(now())
-  recipient        User?              @relation("ReceivedNotifications", fields: [recipientUserId], references: [id], onDelete: Cascade)
-  actor            User?              @relation("CreatedNotifications", fields: [actorUserId], references: [id], onDelete: SetNull)
-  centre           EcdCentre?         @relation(fields: [centreId], references: [id])
-  emailDelivery    EmailDeliveryLog?
+  href            String?
+  metadata        Json?
+  inAppVisible    Boolean            @default(true)
+  readAt          DateTime?
+  createdAt       DateTime           @default(now())
+  recipient       User?              @relation("ReceivedNotifications", fields: [recipientUserId], references: [id], onDelete: Cascade)
+  actor           User?              @relation("CreatedNotifications", fields: [actorUserId], references: [id], onDelete: SetNull)
+  centre          EcdCentre?         @relation(fields: [centreId], references: [id])
+  emailDelivery   EmailDeliveryLog?
 
   @@index([recipientUserId, readAt, createdAt])
   @@index([recipientUserId, module, createdAt])
@@ -1846,10 +2432,10 @@ model EmailDeliveryLog {
   attempts          Int               @default(0)
   providerMessageId String?
   error             String?
-  createdAt         DateTime           @default(now())
-  updatedAt         DateTime           @updatedAt
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
   sentAt            DateTime?
-  notification      Notification       @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  notification      Notification      @relation(fields: [notificationId], references: [id], onDelete: Cascade)
 
   @@index([status, createdAt])
   @@index([recipient, createdAt])
@@ -1920,6 +2506,8 @@ model FileAsset {
   proofs                     ProofOfDelivery[]
   impactReports              ImpactReport[]
   intelligenceReports        IntelligenceResponse[]
+  grantDisbursementEvidence  GrantDisbursement[]         @relation("GrantDisbursementEvidence")
+  grantReportDocuments       GrantReportDocument[]       @relation("GrantReportDocuments")
 }
 
 model IntelligenceQuery {
