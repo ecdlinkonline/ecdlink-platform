@@ -100,7 +100,7 @@ export async function updateCentreProfileInDb(
         ? tx.user.findUnique({ where: { id: actorUserId }, select: { id: true, clerkUserId: true } })
         : Promise.resolve(null)
     ]);
-    console.info("[centre-audit-diagnostic]", {
+    console.error("[centre-audit-diagnostic]", {
       clerkUserId: authenticatedUserId ?? null,
       internalUserId: actorUserId ?? null,
       databaseName: databaseContext[0]?.databaseName ?? null,
