@@ -42,15 +42,15 @@ export function AdminMembershipDashboard({ memberships, reports }: { memberships
               <CardDescription className="dark:text-slate-400">Status breakdown, renewal pressure and regional revenue.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
-              <div className="grid gap-3 md:grid-cols-3">
+              <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,12rem),1fr))] gap-3">
                 {[
                   ["Expected", reports.expectedAnnualRevenue],
                   ["Collected", reports.collectedRevenue],
                   ["Outstanding", reports.outstandingRevenue]
                 ].map(([label, value]) => (
-                  <div key={label} className="rounded-lg border border-brand-line p-4 dark:border-slate-800">
+                  <div key={label} className="min-w-0 rounded-lg border border-brand-line p-4 dark:border-slate-800">
                     <p className="text-sm font-semibold text-slate-500">{label}</p>
-                    <p className="mt-1 text-xl font-bold text-brand-navy dark:text-blue-200">{formatMembershipCurrency(Number(value))}</p>
+                    <p className="mt-1 text-xl font-bold leading-tight tabular-nums text-brand-navy dark:text-blue-200">{formatMembershipCurrency(Number(value))}</p>
                   </div>
                 ))}
               </div>
