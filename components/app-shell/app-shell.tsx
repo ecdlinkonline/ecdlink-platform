@@ -21,6 +21,7 @@ import type { UserRole } from "@/lib/auth/roles";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/components/app-shell/theme-provider";
 import { NotificationCentre } from "@/components/notifications/notification-centre";
+import { SuperAdminWorkspaceSearch } from "@/components/app-shell/super-admin-workspace-search";
 
 function buildBreadcrumbs(pathname: string) {
   const parts = pathname.split("/").filter(Boolean);
@@ -170,10 +171,14 @@ export function AppShell({
               >
                 <Menu className="h-5 w-5" />
               </button>
-              <div className="hidden min-w-72 items-center gap-2 rounded-lg border border-brand-line bg-white px-3 py-2 text-sm text-slate-500 md:flex dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400">
-                <Search className="h-4 w-4" />
-                Search {config.label.toLowerCase()} workspace
-              </div>
+              {role === "super_admin" ? (
+                <SuperAdminWorkspaceSearch />
+              ) : (
+                <div className="hidden min-w-72 items-center gap-2 rounded-lg border border-brand-line bg-white px-3 py-2 text-sm text-slate-500 md:flex dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400">
+                  <Search className="h-4 w-4" />
+                  Search {config.label.toLowerCase()} workspace
+                </div>
+              )}
             </div>
 
             <div className="flex items-center gap-2">
