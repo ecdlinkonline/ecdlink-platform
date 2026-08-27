@@ -248,44 +248,42 @@ export function WorkflowActionDialog<TValues extends WorkflowActionValues, TData
       </span>
 
       {open ? (
-        <div className="fixed inset-0 z-[70] grid place-items-center overflow-hidden bg-slate-950/60 p-2 sm:p-4" role="presentation">
-          <Card role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={description ? descriptionId : undefined} className={cn("flex max-h-[calc(100dvh-1rem)] min-h-0 w-full flex-col sm:max-h-[90vh] dark:border-slate-800 dark:bg-slate-900", sizeClasses[size])}>
+        <div className="fixed inset-0 z-[70] flex items-center justify-center overflow-hidden bg-slate-950/60 p-2 sm:p-4" role="presentation">
+          <Card role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={description ? descriptionId : undefined} className={cn("flex max-h-[calc(100dvh-1rem)] min-h-0 w-full flex-col overflow-hidden sm:max-h-[90dvh] dark:border-slate-800 dark:bg-slate-900", sizeClasses[size])}>
             <CardHeader className="shrink-0">
               <CardTitle id={titleId} className="dark:text-white">{title}</CardTitle>
               {description ? <CardDescription id={descriptionId} className="dark:text-slate-400">{description}</CardDescription> : null}
             </CardHeader>
-            <div className="min-h-0 flex-1">
-              <form className="flex h-full min-h-0 flex-col" onSubmit={(event) => void handleSubmit(event)}>
-                <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-5 pb-5 pt-3">
-                {resolvedFields.map((field, index) => {
-                  const value = values[field.name];
-                  const error = fieldErrors[field.name];
-                  const commonProps = { id: `${titleId}-${field.name}`, name: field.name, disabled: isSubmitting || field.disabled, "aria-invalid": Boolean(error), "aria-describedby": error ? `${titleId}-${field.name}-error` : undefined };
-                  return (
-                    <label key={field.name} className={field.type === "checkbox" ? "flex items-start gap-3" : "block"}>
-                      {field.type === "checkbox" ? (
-                        <input ref={index === 0 ? firstFieldRef as React.RefObject<HTMLInputElement> : undefined} {...commonProps} type="checkbox" checked={Boolean(value)} onChange={(event) => updateValue(field.name, event.target.checked)} className="mt-1 h-4 w-4 rounded border-brand-line" />
-                      ) : null}
-                      <span className={field.type === "checkbox" ? "block flex-1" : "block"}>
-                        <span className="text-sm font-bold text-brand-ink dark:text-white">{field.label}</span>
-                        {field.description ? <span className="mt-1 block text-xs text-slate-500">{field.description}</span> : null}
-                        {field.type === "textarea" ? <textarea ref={index === 0 ? firstFieldRef as React.RefObject<HTMLTextAreaElement> : undefined} {...commonProps} value={String(value ?? "")} rows={field.rows ?? 4} minLength={field.minLength} maxLength={field.maxLength} required={field.required} placeholder={field.placeholder} onChange={(event) => updateValue(field.name, event.target.value)} className={cn(fieldClassName, "resize-y")} /> : null}
-                        {field.type === "text" || field.type === "email" ? <input ref={index === 0 ? firstFieldRef as React.RefObject<HTMLInputElement> : undefined} {...commonProps} type={field.type} value={String(value ?? "")} minLength={field.minLength} maxLength={field.maxLength} required={field.required} placeholder={field.placeholder} onChange={(event) => updateValue(field.name, event.target.value)} className={fieldClassName} /> : null}
-                        {field.type === "number" ? <input ref={index === 0 ? firstFieldRef as React.RefObject<HTMLInputElement> : undefined} {...commonProps} type="number" value={String(value ?? "")} min={field.min} max={field.max} step={field.step} required={field.required} placeholder={field.placeholder} onChange={(event) => updateValue(field.name, event.target.value === "" ? "" : event.target.valueAsNumber)} className={fieldClassName} /> : null}
-                        {field.type === "select" ? <select ref={index === 0 ? firstFieldRef as React.RefObject<HTMLSelectElement> : undefined} {...commonProps} value={String(value ?? "")} required={field.required} onChange={(event) => updateValue(field.name, event.target.value)} className={fieldClassName}><option value="">{field.placeholder ?? "Select an option"}</option>{field.options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select> : null}
-                        {error ? <span id={`${titleId}-${field.name}-error`} className="mt-1 block text-sm font-semibold text-red-700 dark:text-red-300">{error}</span> : null}
-                      </span>
-                    </label>
-                  );
-                })}
-                {formError ? <p className="text-sm font-semibold text-red-700 dark:text-red-300">{formError}</p> : null}
-                </div>
-                <div className="flex shrink-0 justify-end gap-3 border-t border-brand-line bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
-                  <Button type="button" variant="ghost" disabled={isSubmitting && !canCloseWhileLoading} onClick={closeDialog}>{cancelLabel}</Button>
-                  <Button type="submit" disabled={isSubmitting} className={toneClasses[confirmationButton.tone ?? "primary"]}>{isSubmitting ? confirmationButton.loadingLabel : confirmationButton.label}</Button>
-                </div>
-              </form>
-            </div>
+            <form className="flex min-h-0 flex-1 flex-col overflow-hidden" onSubmit={(event) => void handleSubmit(event)}>
+              <div data-workflow-dialog-scroll-body className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain bg-white px-5 pb-5 pt-3 dark:bg-slate-900">
+              {resolvedFields.map((field, index) => {
+                const value = values[field.name];
+                const error = fieldErrors[field.name];
+                const commonProps = { id: `${titleId}-${field.name}`, name: field.name, disabled: isSubmitting || field.disabled, "aria-invalid": Boolean(error), "aria-describedby": error ? `${titleId}-${field.name}-error` : undefined };
+                return (
+                  <label key={field.name} className={field.type === "checkbox" ? "flex items-start gap-3" : "block"}>
+                    {field.type === "checkbox" ? (
+                      <input ref={index === 0 ? firstFieldRef as React.RefObject<HTMLInputElement> : undefined} {...commonProps} type="checkbox" checked={Boolean(value)} onChange={(event) => updateValue(field.name, event.target.checked)} className="mt-1 h-4 w-4 rounded border-brand-line" />
+                    ) : null}
+                    <span className={field.type === "checkbox" ? "block flex-1" : "block"}>
+                      <span className="text-sm font-bold text-brand-ink dark:text-white">{field.label}</span>
+                      {field.description ? <span className="mt-1 block text-xs text-slate-500">{field.description}</span> : null}
+                      {field.type === "textarea" ? <textarea ref={index === 0 ? firstFieldRef as React.RefObject<HTMLTextAreaElement> : undefined} {...commonProps} value={String(value ?? "")} rows={field.rows ?? 4} minLength={field.minLength} maxLength={field.maxLength} required={field.required} placeholder={field.placeholder} onChange={(event) => updateValue(field.name, event.target.value)} className={cn(fieldClassName, "resize-y")} /> : null}
+                      {field.type === "text" || field.type === "email" ? <input ref={index === 0 ? firstFieldRef as React.RefObject<HTMLInputElement> : undefined} {...commonProps} type={field.type} value={String(value ?? "")} minLength={field.minLength} maxLength={field.maxLength} required={field.required} placeholder={field.placeholder} onChange={(event) => updateValue(field.name, event.target.value)} className={fieldClassName} /> : null}
+                      {field.type === "number" ? <input ref={index === 0 ? firstFieldRef as React.RefObject<HTMLInputElement> : undefined} {...commonProps} type="number" value={String(value ?? "")} min={field.min} max={field.max} step={field.step} required={field.required} placeholder={field.placeholder} onChange={(event) => updateValue(field.name, event.target.value === "" ? "" : event.target.valueAsNumber)} className={fieldClassName} /> : null}
+                      {field.type === "select" ? <select ref={index === 0 ? firstFieldRef as React.RefObject<HTMLSelectElement> : undefined} {...commonProps} value={String(value ?? "")} required={field.required} onChange={(event) => updateValue(field.name, event.target.value)} className={fieldClassName}><option value="">{field.placeholder ?? "Select an option"}</option>{field.options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select> : null}
+                      {error ? <span id={`${titleId}-${field.name}-error`} className="mt-1 block text-sm font-semibold text-red-700 dark:text-red-300">{error}</span> : null}
+                    </span>
+                  </label>
+                );
+              })}
+              {formError ? <p className="text-sm font-semibold text-red-700 dark:text-red-300">{formError}</p> : null}
+              </div>
+              <div data-workflow-dialog-footer className="flex shrink-0 justify-end gap-3 border-t border-brand-line bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
+                <Button type="button" variant="ghost" disabled={isSubmitting && !canCloseWhileLoading} onClick={closeDialog}>{cancelLabel}</Button>
+                <Button type="submit" disabled={isSubmitting} className={toneClasses[confirmationButton.tone ?? "primary"]}>{isSubmitting ? confirmationButton.loadingLabel : confirmationButton.label}</Button>
+              </div>
+            </form>
           </Card>
         </div>
       ) : null}
