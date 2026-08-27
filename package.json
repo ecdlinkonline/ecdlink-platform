@@ -23,6 +23,7 @@
     "test:production-health": "tsx --conditions=react-server --test lib/config/production.test.ts lib/health/readiness.test.ts app/api/health/health.test.ts",
     "test:production-security": "tsx --conditions=react-server --test lib/security/content-security-policy.test.ts lib/security/route-access.test.ts lib/security/trusted-origin.test.ts lib/security/upload-request.test.ts lib/security/fallback-auth.test.ts lib/rate-limit/service.test.ts lib/auth/authorization.test.ts lib/auth/onboarding.test.ts app/api/centres/centre-route.test.ts",
     "test:super-admin-search": "tsx --conditions=react-server --test lib/search/super-admin-search.test.ts lib/search/latest-search-request.test.ts lib/repositories/super-admin-search.test.ts app/api/super-admin/search/route.test.ts",
+    "test:grant-reports": "tsx --conditions=react-server --test lib/validators/grant-reports.test.ts lib/repositories/grant-reports.test.ts lib/services/grant-reports.test.ts lib/grant-reports/presentation.test.ts app/api/reports/route.test.ts",
     "storage:verify": "tsx --conditions=react-server --env-file-if-exists=.env --env-file-if-exists=.env.local scripts/storage/verify-supabase.ts"
   },
   "dependencies": {
