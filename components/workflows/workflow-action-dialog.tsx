@@ -4,7 +4,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { useToast } from "@/components/design-system";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
 export type WorkflowActionValues = Record<string, string | number | boolean>;
@@ -139,6 +139,15 @@ export function WorkflowActionDialog<TValues extends WorkflowActionValues, TData
 
   useEffect(() => {
     if (!open) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
     firstFieldRef.current?.focus();
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape" && (!isSubmitting || canCloseWhileLoading)) closeDialog();
@@ -239,14 +248,15 @@ export function WorkflowActionDialog<TValues extends WorkflowActionValues, TData
       </span>
 
       {open ? (
-        <div className="fixed inset-0 z-[70] grid place-items-center bg-slate-950/60 p-4" role="presentation">
-          <Card role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={description ? descriptionId : undefined} className={cn("w-full dark:border-slate-800 dark:bg-slate-900", sizeClasses[size])}>
-            <CardHeader>
+        <div className="fixed inset-0 z-[70] grid place-items-center overflow-hidden bg-slate-950/60 p-2 sm:p-4" role="presentation">
+          <Card role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={description ? descriptionId : undefined} className={cn("flex max-h-[calc(100dvh-1rem)] min-h-0 w-full flex-col sm:max-h-[90vh] dark:border-slate-800 dark:bg-slate-900", sizeClasses[size])}>
+            <CardHeader className="shrink-0">
               <CardTitle id={titleId} className="dark:text-white">{title}</CardTitle>
               {description ? <CardDescription id={descriptionId} className="dark:text-slate-400">{description}</CardDescription> : null}
             </CardHeader>
-            <CardContent>
-              <form className="space-y-4" onSubmit={(event) => void handleSubmit(event)}>
+            <div className="min-h-0 flex-1">
+              <form className="flex h-full min-h-0 flex-col" onSubmit={(event) => void handleSubmit(event)}>
+                <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-5 pb-5 pt-3">
                 {resolvedFields.map((field, index) => {
                   const value = values[field.name];
                   const error = fieldErrors[field.name];
@@ -269,12 +279,13 @@ export function WorkflowActionDialog<TValues extends WorkflowActionValues, TData
                   );
                 })}
                 {formError ? <p className="text-sm font-semibold text-red-700 dark:text-red-300">{formError}</p> : null}
-                <div className="flex justify-end gap-3">
+                </div>
+                <div className="flex shrink-0 justify-end gap-3 border-t border-brand-line bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
                   <Button type="button" variant="ghost" disabled={isSubmitting && !canCloseWhileLoading} onClick={closeDialog}>{cancelLabel}</Button>
                   <Button type="submit" disabled={isSubmitting} className={toneClasses[confirmationButton.tone ?? "primary"]}>{isSubmitting ? confirmationButton.loadingLabel : confirmationButton.label}</Button>
                 </div>
               </form>
-            </CardContent>
+            </div>
           </Card>
         </div>
       ) : null}
