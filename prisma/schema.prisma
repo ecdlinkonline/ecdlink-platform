@@ -2009,6 +2009,9 @@ model GrantAward {
   description             String?
   currency                String                     @default("ZAR")
   awardedAmount           Decimal                    @db.Decimal(14, 2)
+  signedAgreementFileAssetId String?                 @unique
+  agreementDate           DateTime?
+  signedByBothParties     Boolean                    @default(false)
   startDate               DateTime
   endDate                 DateTime?
   status                  GrantAwardStatus           @default(DRAFT)
@@ -2025,6 +2028,7 @@ model GrantAward {
   fundingProject          FundingProject             @relation(fields: [fundingProjectId], references: [id], onDelete: Restrict)
   fundingApplication      FundingApplication?        @relation(fields: [fundingApplicationId], references: [id], onDelete: Restrict)
   sponsorshipCommitment   SponsorshipCommitment?     @relation(fields: [sponsorshipCommitmentId], references: [id], onDelete: Restrict)
+  signedAgreementFile     FileAsset?                  @relation("GrantAwardSignedAgreement", fields: [signedAgreementFileAssetId], references: [id], onDelete: Restrict)
   confirmedBy             User                       @relation("GrantAwardsConfirmedBy", fields: [confirmedByUserId], references: [id], onDelete: Restrict)
   organisations           GrantAwardOrganisation[]
   explicitAccess          GrantAwardAccess[]
@@ -2508,6 +2512,7 @@ model FileAsset {
   intelligenceReports        IntelligenceResponse[]
   grantDisbursementEvidence  GrantDisbursement[]         @relation("GrantDisbursementEvidence")
   grantReportDocuments       GrantReportDocument[]       @relation("GrantReportDocuments")
+  grantAwardSignedAgreement  GrantAward?                 @relation("GrantAwardSignedAgreement")
 }
 
 model IntelligenceQuery {
