@@ -22,7 +22,8 @@ function mocks(options: { persistenceFails?: boolean } = {}) {
       if (options.persistenceFails) throw new Error("database unavailable");
       return { id: input.id, originalFilename: input.originalFilename, mimeType: input.mimeType, fileSize: input.fileSize, checksum: input.checksum, createdAt: new Date(0) };
     },
-    findFileAsset: async (id) => ({ id, storageProvider: "supabase", storageKey: "funding/owner/entity/asset/evidence.pdf", originalFilename: "evidence.pdf", mimeType: "application/pdf", fileSize: 6, checksum: "checksum", createdAt: new Date(0) }),
+    findFileAsset: async (id) => ({ id, storageProvider: "supabase", storageKey: `funding/owner/entity/${id}/evidence.pdf`, originalFilename: "evidence.pdf", mimeType: "application/pdf", fileSize: 6, checksum: "checksum", uploadedByUserId: "user-1", createdAt: new Date(0) }),
+    deleteFileAssetForRollback: async ({ fileAssetId }) => ({ id: fileAssetId, storageProvider: "supabase", storageKey: `funding/owner/entity/${fileAssetId}/evidence.pdf`, originalFilename: "evidence.pdf", mimeType: "application/pdf", fileSize: 6, checksum: "checksum", uploadedByUserId: "user-1", createdAt: new Date(0) }),
     recordAccess: async () => undefined,
   };
   return { provider, persistence, removed };

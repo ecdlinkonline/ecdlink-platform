@@ -19,6 +19,16 @@ test("optional blank dates are omitted and invalid award date ranges are rejecte
   assert.equal(createGrantAwardSchema.safeParse({ ...award, endDate: "2026-07-31" }).success, false);
 });
 
+test("signed agreement metadata is optional and valid dates and signature state are parsed", () => {
+  const withoutAgreement = createGrantAwardSchema.parse(award);
+  assert.equal(withoutAgreement.signedAgreementFileAssetId, undefined);
+  assert.equal(withoutAgreement.signedByBothParties, false);
+  const withAgreement = createGrantAwardSchema.parse({ ...award, signedAgreementFileAssetId: "file-1", agreementDate: "2026-08-20", signedByBothParties: true });
+  assert.equal(withAgreement.signedAgreementFileAssetId, "file-1");
+  assert.deepEqual(withAgreement.agreementDate, new Date("2026-08-20"));
+  assert.equal(withAgreement.signedByBothParties, true);
+});
+
 test("obligation basis-specific requirements are enforced", () => {
   const base = { grantAwardId: "award-1", type: "INTERIM", title: "Quarter one", dueAt: "2026-10-01" };
   assert.equal(createGrantReportingObligationSchema.safeParse({ ...base, basis: "QUARTER" }).success, false);

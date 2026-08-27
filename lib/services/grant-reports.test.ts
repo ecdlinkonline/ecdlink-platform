@@ -23,19 +23,20 @@ const baseAward = createGrantAwardSchema.parse({
 });
 
 function awardTransaction(applicationOverrides: Record<string, unknown> = {}) {
-  const captured: { award?: Record<string, unknown>; party?: Record<string, unknown>; audit?: Record<string, unknown> } = {};
+  const captured: { award?: Record<string, unknown>; party?: Record<string, unknown>; audit?: Record<string, unknown>; audits: Record<string, unknown>[] } = { audits: [] };
   const transaction = {
     fundingProject: { findUnique: async () => ({ id: "project-1", profile: { centreId: "centre-1" } }) },
     fundingApplication: { findUnique: async () => ({ id: "application-1", status: "APPROVED", projectId: "project-1", fundingOrganisationId: "funder-1", grantAward: null, project: { profile: { centreId: "centre-1" } }, ...applicationOverrides }) },
     sponsorshipCommitment: { findUnique: async () => null },
     fundingOrganisation: { findUnique: async () => ({ id: "funder-1" }) },
     donorOrganisation: { findUnique: async () => null },
+    fileAsset: { findFirst: async () => ({ id: "file-1", storageKey: "funding/internal-user-1/grant-award-staging/file-1/agreement.pdf", originalFilename: "agreement.pdf", mimeType: "application/pdf", fileSize: 1024, grantAwardSignedAgreement: null }) },
     grantAward: {
       findUnique: async () => null,
       create: async ({ data }: { data: Record<string, unknown> }) => { captured.award = data; return { id: "award-1", ...data }; },
     },
     grantAwardOrganisation: { create: async ({ data }: { data: Record<string, unknown> }) => { captured.party = data; return { id: "party-1", ...data }; } },
-    auditLog: { create: async ({ data }: { data: Record<string, unknown> }) => { captured.audit = data; return { id: "audit-1" }; } },
+    auditLog: { create: async ({ data }: { data: Record<string, unknown> }) => { captured.audit = data; captured.audits.push(data); return { id: "audit-1" }; } },
   };
   return { transaction, captured };
 }
@@ -47,6 +48,18 @@ test("a valid approved funding application creates award, lead party and audit a
   assert.equal(captured.party?.addedByUserId, "internal-user-1");
   assert.equal(captured.audit?.actorUserId, "internal-user-1");
   assert.equal(captured.audit?.action, "grant.award.create");
+});
+
+test("an optional staged agreement is linked with signed metadata and audited using the internal actor", async () => {
+  const input = createGrantAwardSchema.parse({ ...baseAward, signedAgreementFileAssetId: "file-1", signedByBothParties: true, agreementDate: "2026-08-15" });
+  const { transaction, captured } = awardTransaction();
+  await createGrantAward(input, "internal-user-1", runner(transaction));
+  assert.equal(captured.award?.signedAgreementFileAssetId, "file-1");
+  assert.equal(captured.award?.signedByBothParties, true);
+  assert.deepEqual(captured.award?.agreementDate, new Date("2026-08-15"));
+  assert.equal(captured.party?.role, "LEAD_FUNDER");
+  assert.deepEqual(captured.audits.map((audit) => audit.action), ["grant.award.create", "grant.award.agreement.attached"]);
+  assert.ok(captured.audits.every((audit) => audit.actorUserId === "internal-user-1"));
 });
 
 test("duplicate application conversion and mismatched relationships are rejected", async () => {

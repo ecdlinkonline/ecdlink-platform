@@ -12,6 +12,7 @@ import { defaultDocumentPolicy, isPreviewableMimeType, type StorageUploadFile, v
 type StoredFileRecord = SafeFileAsset & {
   storageProvider: string;
   storageKey: string;
+  uploadedByUserId: string | null;
 };
 
 export interface StoragePersistence {
@@ -28,6 +29,7 @@ export interface StoragePersistence {
     entityId: string;
   }): Promise<SafeFileAsset>;
   findFileAsset(fileAssetId: string): Promise<StoredFileRecord | null>;
+  deleteFileAssetForRollback(input: { fileAssetId: string; uploadedByUserId: string }): Promise<StoredFileRecord | null>;
   recordAccess(input: { action: "storage.file.access.previewed" | "storage.file.access.downloaded"; file: StoredFileRecord; context: StorageAccessContext }): Promise<void>;
 }
 
@@ -72,7 +74,20 @@ const prismaStoragePersistence: StoragePersistence = {
   findFileAsset(fileAssetId) {
     return prisma.fileAsset.findUnique({
       where: { id: fileAssetId },
-      select: { id: true, storageProvider: true, storageKey: true, originalFilename: true, mimeType: true, fileSize: true, checksum: true, createdAt: true },
+      select: { id: true, storageProvider: true, storageKey: true, originalFilename: true, mimeType: true, fileSize: true, checksum: true, uploadedByUserId: true, createdAt: true },
+    });
+  },
+
+  async deleteFileAssetForRollback(input) {
+    return prisma.$transaction(async (tx) => {
+      const file = await tx.fileAsset.findFirst({
+        where: { id: input.fileAssetId, uploadedByUserId: input.uploadedByUserId },
+        select: { id: true, storageProvider: true, storageKey: true, originalFilename: true, mimeType: true, fileSize: true, checksum: true, uploadedByUserId: true, createdAt: true },
+      });
+      if (!file) return null;
+      await tx.fileAsset.delete({ where: { id: file.id } });
+      await tx.auditLog.create({ data: { actorUserId: input.uploadedByUserId, action: "storage.file.upload.rolled_back", entityType: "FileAsset", entityId: file.id, metadata: { fileAssetId: file.id } } });
+      return file;
     });
   },
 
@@ -168,6 +183,17 @@ export class StorageService {
     return this.provider.exists(file.storageKey);
   }
 
+  async rollbackStagedFileAsset(input: { fileAssetId: string; uploadedByUserId: string; module: StorageModule; ownerId: string; entityId: string }) {
+    const file = await this.persistence.findFileAsset(input.fileAssetId);
+    const expectedPrefix = `${input.module}/${input.ownerId}/${input.entityId}/${input.fileAssetId}/`;
+    if (!file || file.uploadedByUserId !== input.uploadedByUserId || !file.storageKey.startsWith(expectedPrefix)) {
+      throw new StorageAccessError("The staged file was not found.", 404);
+    }
+    const deleted = await this.persistence.deleteFileAssetForRollback({ fileAssetId: input.fileAssetId, uploadedByUserId: input.uploadedByUserId });
+    if (!deleted) throw new StorageAccessError("The staged file was not found.", 404);
+    await this.provider.removeForRollback(deleted.storageKey);
+  }
+
   private async requireSupabaseFile(fileAssetId: string) {
     const file = await this.persistence.findFileAsset(fileAssetId);
     if (!file) throw new StorageNotFoundError();
@@ -215,4 +241,5 @@ export const storage = {
   createPreviewAccess: (input: { fileAssetId: string; context: StorageAccessContext }) => getStorageService().createPreviewAccess(input),
   createDownloadAccess: (input: { fileAssetId: string; context: StorageAccessContext }) => getStorageService().createDownloadAccess(input),
   exists: (input: { fileAssetId: string; context: StorageAccessContext }) => getStorageService().exists(input),
+  rollbackStagedFileAsset: (input: { fileAssetId: string; uploadedByUserId: string; module: StorageModule; ownerId: string; entityId: string }) => getStorageService().rollbackStagedFileAsset(input),
 };

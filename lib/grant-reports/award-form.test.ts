@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { grantAwardSourceFieldState, updateGrantAwardSource, validateGrantAwardSource, type GrantAwardFormSources, type GrantAwardFormValues } from "./award-form";
+import { buildGrantAwardSubmission, grantAwardLeadOrganisation, grantAwardSourceFieldState, updateGrantAwardSource, validateGrantAwardSource, type GrantAwardFormSources, type GrantAwardFormValues } from "./award-form";
 
 const sources: GrantAwardFormSources = {
   applications: [
@@ -14,7 +14,7 @@ const sources: GrantAwardFormSources = {
 };
 
 function values(overrides: Partial<GrantAwardFormValues> = {}): GrantAwardFormValues {
-  return { sourceType: "MANUAL", fundingApplicationId: "", sponsorshipCommitmentId: "", centreId: "", fundingProjectId: "", awardNumber: "", title: "", description: "", awardedAmount: "", currency: "ZAR", organisationType: "FUNDING_ORGANISATION", fundingOrganisationId: "", donorOrganisationId: "", ...overrides };
+  return { sourceType: "MANUAL", fundingApplicationId: "", sponsorshipCommitmentId: "", centreId: "", fundingProjectId: "", awardNumber: "", title: "", description: "", awardedAmount: "", currency: "ZAR", organisationType: "FUNDING_ORGANISATION", fundingOrganisationId: "", donorOrganisationId: "", startDate: "", endDate: "", agreementDate: "", signedByBothParties: false, canReview: true, canApprove: false, ...overrides };
 }
 
 test("Funding Application selection populates and locks its centre, project, funder and approved amount", () => {
@@ -23,6 +23,7 @@ test("Funding Application selection populates and locks its centre, project, fun
   const attemptedChange = updateGrantAwardSource({ ...populated, centreId: "unrelated-centre" }, "centreId", sources);
   assert.equal(attemptedChange.centreId, "centre-1");
   assert.equal(grantAwardSourceFieldState("FUNDING_APPLICATION").relationshipFieldsDisabled, true);
+  assert.equal(grantAwardLeadOrganisation(populated, sources), "Fund One");
 });
 
 test("a missing approved amount remains blank and editable", () => {
@@ -34,6 +35,7 @@ test("a missing approved amount remains blank and editable", () => {
 test("Sponsorship Commitment selection populates centre, project, donor and amount", () => {
   const populated = updateGrantAwardSource(values({ sourceType: "SPONSORSHIP_COMMITMENT", sponsorshipCommitmentId: "commitment-1" }), "sponsorshipCommitmentId", sources);
   assert.deepEqual({ centreId: populated.centreId, projectId: populated.fundingProjectId, donorId: populated.donorOrganisationId, amount: populated.awardedAmount }, { centreId: "centre-3", projectId: "project-3", donorId: "donor-1", amount: 50000 });
+  assert.equal(grantAwardLeadOrganisation(populated, sources), "Donor One");
 });
 
 test("a commitment without FundingProject is blocked with a clear validation error", () => {
@@ -43,7 +45,22 @@ test("a commitment without FundingProject is blocked with a clear validation err
 });
 
 test("Manual hides source selectors and a source-type change clears stale derived values", () => {
-  assert.deepEqual(grantAwardSourceFieldState("MANUAL"), { showFundingApplication: false, showSponsorshipCommitment: false, relationshipFieldsDisabled: false });
+  assert.deepEqual(grantAwardSourceFieldState("MANUAL"), { showFundingApplication: false, showSponsorshipCommitment: false, relationshipFieldsDisabled: false, showPartnerType: true, showOrganisationRole: false });
   const reset = updateGrantAwardSource(values({ sourceType: "MANUAL", fundingApplicationId: "application-1", centreId: "centre-1", fundingProjectId: "project-1", fundingOrganisationId: "funder-1", awardedAmount: 125000 }), "sourceType", sources);
   assert.deepEqual({ application: reset.fundingApplicationId, commitment: reset.sponsorshipCommitmentId, centre: reset.centreId, project: reset.fundingProjectId, funder: reset.fundingOrganisationId, amount: reset.awardedAmount }, { application: "", commitment: "", centre: "", project: "", funder: "", amount: "" });
+});
+
+test("submission keeps derived organisation IDs but never exposes an organisation role choice", () => {
+  const populated = updateGrantAwardSource(values({ sourceType: "FUNDING_APPLICATION", fundingApplicationId: "application-1" }), "fundingApplicationId", sources);
+  const payload = buildGrantAwardSubmission(populated, "file-1");
+  assert.equal(payload.organisationType, "FUNDING_ORGANISATION");
+  assert.equal(payload.fundingOrganisationId, "funder-1");
+  assert.equal(payload.signedAgreementFileAssetId, "file-1");
+  assert.equal("organisationRole" in payload, false);
+});
+
+test("manual partner type remains selectable and clears an incompatible organisation", () => {
+  const changed = updateGrantAwardSource(values({ organisationType: "DONOR_ORGANISATION", fundingOrganisationId: "stale-funder" }), "organisationType", sources);
+  assert.equal(changed.fundingOrganisationId, "");
+  assert.equal(changed.organisationType, "DONOR_ORGANISATION");
 });

@@ -14,6 +14,12 @@ export type GrantAwardFormValues = WorkflowActionValues & {
   organisationType: string;
   fundingOrganisationId: string;
   donorOrganisationId: string;
+  startDate: string;
+  endDate: string;
+  agreementDate: string;
+  signedByBothParties: boolean;
+  canReview: boolean;
+  canApprove: boolean;
 };
 
 export type GrantAwardFormSources = {
@@ -46,6 +52,39 @@ export function grantAwardSourceFieldState(sourceType: string) {
     showFundingApplication: sourceType === "FUNDING_APPLICATION",
     showSponsorshipCommitment: sourceType === "SPONSORSHIP_COMMITMENT",
     relationshipFieldsDisabled: sourceType !== "MANUAL",
+    showPartnerType: sourceType === "MANUAL",
+    showOrganisationRole: false,
+  };
+}
+
+export function grantAwardLeadOrganisation(values: GrantAwardFormValues, sources: GrantAwardFormSources) {
+  if (values.sourceType === "FUNDING_APPLICATION") return sources.applications.find((item) => item.id === values.fundingApplicationId)?.organisationName ?? "Select a Funding Application";
+  if (values.sourceType === "SPONSORSHIP_COMMITMENT") return sources.commitments.find((item) => item.id === values.sponsorshipCommitmentId)?.organisationName ?? "Select a Sponsorship Commitment";
+  return null;
+}
+
+export function buildGrantAwardSubmission(values: GrantAwardFormValues, signedAgreementFileAssetId?: string) {
+  return {
+    sourceType: values.sourceType,
+    fundingApplicationId: values.fundingApplicationId,
+    sponsorshipCommitmentId: values.sponsorshipCommitmentId,
+    centreId: values.centreId,
+    fundingProjectId: values.fundingProjectId,
+    awardNumber: values.awardNumber,
+    title: values.title,
+    description: values.description,
+    awardedAmount: values.awardedAmount,
+    currency: values.currency,
+    startDate: values.startDate,
+    endDate: values.endDate,
+    organisationType: values.organisationType,
+    fundingOrganisationId: values.fundingOrganisationId,
+    donorOrganisationId: values.donorOrganisationId,
+    canReview: values.canReview,
+    canApprove: values.canApprove,
+    signedAgreementFileAssetId: signedAgreementFileAssetId ?? "",
+    agreementDate: values.agreementDate,
+    signedByBothParties: values.signedByBothParties,
   };
 }
 
@@ -70,6 +109,18 @@ export function updateGrantAwardSource(
       sponsorshipCommitmentId: "",
       organisationType: values.sourceType === "SPONSORSHIP_COMMITMENT" ? "DONOR_ORGANISATION" : "FUNDING_ORGANISATION",
     };
+  }
+
+  if (values.sourceType === "MANUAL" && changedField === "organisationType") {
+    return {
+      ...values,
+      fundingOrganisationId: values.organisationType === "FUNDING_ORGANISATION" ? values.fundingOrganisationId : "",
+      donorOrganisationId: values.organisationType === "DONOR_ORGANISATION" ? values.donorOrganisationId : "",
+    };
+  }
+
+  if (values.sourceType === "MANUAL" && changedField === "centreId") {
+    return { ...values, fundingProjectId: "" };
   }
 
   if (values.sourceType === "FUNDING_APPLICATION" && ["fundingApplicationId", "centreId", "fundingProjectId", "organisationType", "fundingOrganisationId", "donorOrganisationId"].includes(changedField)) {

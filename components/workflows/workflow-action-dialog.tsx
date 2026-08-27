@@ -78,6 +78,12 @@ export type WorkflowActionDialogProps<TValues extends WorkflowActionValues, TDat
   };
   cancelLabel?: string;
   fields: WorkflowActionField<TValues>[] | ((values: TValues) => WorkflowActionField<TValues>[]);
+  renderFields?: (context: {
+    values: TValues;
+    updateValue: (name: Extract<keyof TValues, string>, value: string | number | boolean) => void;
+    fieldErrors: Record<string, string>;
+    disabled: boolean;
+  }) => ReactNode;
   initialValues: TValues;
   onValuesChange?: (values: TValues, changedField: Extract<keyof TValues, string>) => TValues;
   action: (values: TValues) => Promise<WorkflowActionResult<TData>>;
@@ -117,6 +123,7 @@ export function WorkflowActionDialog<TValues extends WorkflowActionValues, TData
   confirmationButton,
   cancelLabel = "Cancel",
   fields,
+  renderFields,
   initialValues,
   onValuesChange,
   action,
@@ -256,6 +263,7 @@ export function WorkflowActionDialog<TValues extends WorkflowActionValues, TData
             </CardHeader>
             <form className="flex min-h-0 flex-1 flex-col overflow-hidden" onSubmit={(event) => void handleSubmit(event)}>
               <div data-workflow-dialog-scroll-body className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain bg-white px-5 pb-5 pt-3 dark:bg-slate-900">
+              {renderFields?.({ values, updateValue, fieldErrors, disabled: isSubmitting })}
               {resolvedFields.map((field, index) => {
                 const value = values[field.name];
                 const error = fieldErrors[field.name];

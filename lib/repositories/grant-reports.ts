@@ -92,6 +92,7 @@ export async function getGrantReportWorkspace(filters: GrantReportFiltersInput =
       include: {
         centre: { select: { id: true, centreName: true } },
         fundingProject: { select: { id: true, title: true } },
+        signedAgreementFile: { select: { id: true, originalFilename: true, mimeType: true, fileSize: true, createdAt: true } },
         organisations: partyInclude,
         tranches: { select: { id: true, trancheNumber: true, title: true }, orderBy: { trancheNumber: "asc" } },
         _count: { select: { tranches: true, obligations: true } },
@@ -159,6 +160,15 @@ export async function getGrantReportWorkspace(filters: GrantReportFiltersInput =
       status: award.status,
       trancheCount: award._count.tranches,
       obligationCount: award._count.obligations,
+      agreementDate: dateValue(award.agreementDate),
+      signedByBothParties: award.signedByBothParties,
+      signedAgreement: award.signedAgreementFile ? {
+        id: award.signedAgreementFile.id,
+        originalFilename: award.signedAgreementFile.originalFilename,
+        mimeType: award.signedAgreementFile.mimeType,
+        fileSize: award.signedAgreementFile.fileSize,
+        uploadedAt: award.signedAgreementFile.createdAt.toISOString(),
+      } : null,
     })),
     obligations: obligations.map((obligation) => ({
       id: obligation.id,

@@ -27,10 +27,12 @@ export const createGrantAwardSchema = z.object({
   currency: z.string().trim().length(3).transform((value) => value.toUpperCase()).default("ZAR"),
   startDate: z.coerce.date(),
   endDate: optionalDate,
+  signedAgreementFileAssetId: optionalId,
+  agreementDate: optionalDate,
+  signedByBothParties: z.coerce.boolean().default(false),
   organisationType: z.enum(["FUNDING_ORGANISATION", "DONOR_ORGANISATION"]),
   fundingOrganisationId: optionalId,
   donorOrganisationId: optionalId,
-  organisationRole: z.enum(["LEAD_FUNDER", "CO_FUNDER", "IMPLEMENTATION_PARTNER", "OVERSIGHT_PARTNER"]).default("LEAD_FUNDER"),
   canReview: z.coerce.boolean().default(true),
   canApprove: z.coerce.boolean().default(false),
 }).superRefine((input, context) => {

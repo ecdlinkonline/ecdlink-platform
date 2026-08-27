@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import { withGrantReportingTransaction } from "@/lib/repositories/grant-reports";
 import type { CreateGrantAwardInput, CreateGrantReportingObligationInput } from "@/lib/validators/grant-reports";
+import { GRANT_AWARD_STAGING_ENTITY } from "@/lib/services/grant-award-agreements";
 
 export class GrantReportingServiceError extends Error {
   constructor(message: string, public readonly status: number) {
@@ -50,6 +51,19 @@ export async function createGrantAward(input: CreateGrantAwardInput, actorUserId
     const duplicateNumber = await tx.grantAward.findUnique({ where: { awardNumber: input.awardNumber }, select: { id: true } });
     if (duplicateNumber) throw new GrantReportingServiceError("An award with this award number already exists.", 409);
 
+    let agreement: { id: string; originalFilename: string; mimeType: string; fileSize: number } | null = null;
+    if (input.signedAgreementFileAssetId) {
+      const staged = await tx.fileAsset.findFirst({
+        where: { id: input.signedAgreementFileAssetId, uploadedByUserId: actorUserId },
+        select: { id: true, storageKey: true, originalFilename: true, mimeType: true, fileSize: true, grantAwardSignedAgreement: { select: { id: true } } },
+      });
+      const expectedPrefix = `funding/${actorUserId}/${GRANT_AWARD_STAGING_ENTITY}/${input.signedAgreementFileAssetId}/`;
+      if (!staged || staged.mimeType !== "application/pdf" || !staged.storageKey.startsWith(expectedPrefix) || staged.grantAwardSignedAgreement) {
+        throw new GrantReportingServiceError("The staged signed agreement is invalid or unavailable.", 422);
+      }
+      agreement = staged;
+    }
+
     const award = await tx.grantAward.create({
       data: {
         centreId: input.centreId,
@@ -64,12 +78,18 @@ export async function createGrantAward(input: CreateGrantAwardInput, actorUserId
         currency: input.currency,
         startDate: input.startDate,
         endDate: input.endDate,
+        signedAgreementFileAssetId: agreement?.id,
+        agreementDate: input.agreementDate,
+        signedByBothParties: input.signedByBothParties,
         status: "ACTIVE",
         confirmedByUserId: actorUserId,
       },
     });
-    const party = await tx.grantAwardOrganisation.create({ data: { grantAwardId: award.id, organisationType: input.organisationType, fundingOrganisationId: input.fundingOrganisationId, donorOrganisationId: input.donorOrganisationId, role: input.organisationRole, isPrimary: true, canReview: input.canReview, canApprove: input.canApprove, addedByUserId: actorUserId } });
-    await tx.auditLog.create({ data: { actorUserId, action: "grant.award.create", entityType: "GrantAward", entityId: award.id, after: json({ award, party }), metadata: json({ sourceType: input.sourceType }) } });
+    const party = await tx.grantAwardOrganisation.create({ data: { grantAwardId: award.id, organisationType: input.organisationType, fundingOrganisationId: input.fundingOrganisationId, donorOrganisationId: input.donorOrganisationId, role: "LEAD_FUNDER", isPrimary: true, canReview: input.canReview, canApprove: input.canApprove, addedByUserId: actorUserId } });
+    await tx.auditLog.create({ data: { actorUserId, action: "grant.award.create", entityType: "GrantAward", entityId: award.id, after: json({ award, party }), metadata: json({ sourceType: input.sourceType, signedAgreementFileAssetId: agreement?.id ?? null }) } });
+    if (agreement) {
+      await tx.auditLog.create({ data: { actorUserId, action: "grant.award.agreement.attached", entityType: "GrantAward", entityId: award.id, after: json({ signedAgreementFileAssetId: agreement.id, agreementDate: input.agreementDate, signedByBothParties: input.signedByBothParties }), metadata: json({ fileAssetId: agreement.id, originalFilename: agreement.originalFilename, mimeType: agreement.mimeType, fileSize: agreement.fileSize }) } });
+    }
     return award;
   });
 }

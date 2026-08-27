@@ -4,19 +4,18 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { CalendarClock, CheckCircle2, ClipboardList, FileClock, FileText, HandCoins, PlusCircle } from "lucide-react";
 import { DataTable, KpiCard, PageHeader, StatusBadge } from "@/components/design-system";
+import { GrantAwardDialog } from "@/components/reports/grant-award-dialog";
 import { WorkflowActionDialog, type WorkflowActionResult } from "@/components/workflows/workflow-action-dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatGrantCurrency, formatGrantLabel, reportTypeLabels } from "@/lib/grant-reports/types";
 import { grantReportEmptyStateMessage } from "@/lib/grant-reports/presentation";
-import { grantAwardSourceFieldState, updateGrantAwardSource, validateGrantAwardSource, type GrantAwardFormValues } from "@/lib/grant-reports/award-form";
 import type { GrantReportWorkspaceData } from "@/lib/grant-reports/types";
 import type { GrantReportFiltersInput } from "@/lib/validators/grant-reports";
 
 const tabs = [{ id: "reports", label: "Reports" }, { id: "awards", label: "Grant Awards" }, { id: "obligations", label: "Reporting Obligations" }] as const;
 type TabId = typeof tabs[number]["id"];
 
-type AwardValues = GrantAwardFormValues & { startDate: string; endDate: string; organisationRole: string; canReview: boolean; canApprove: boolean };
 type ObligationValues = { grantAwardId: string; grantTrancheId: string; type: string; basis: string; title: string; description: string; reportingPeriodStart: string; reportingPeriodEnd: string; financialYear: string; quarter: number; dueAt: string; requiresFunderApproval: boolean; requiresSuperAdminApproval: boolean };
 
 async function postAction(url: string, values: Record<string, string | number | boolean>): Promise<WorkflowActionResult> {
@@ -40,7 +39,7 @@ export function GrantReportsWorkspace({ data, initialTab, filters }: { data: Gra
   ];
 
   return <div className="space-y-6">
-    <PageHeader eyebrow="Super Admin" title="Grant Reports" description="Oversee confirmed grant awards, reporting obligations and formal report lifecycles across ECDLink." actions={<><AwardDialog data={data} onSuccess={refresh} /><ObligationDialog data={data} onSuccess={refresh} /><Link href="/dashboard/super-admin"><Button variant="secondary">Back to dashboard</Button></Link></>} />
+    <PageHeader eyebrow="Super Admin" title="Grant Reports" description="Oversee confirmed grant awards, reporting obligations and formal report lifecycles across ECDLink." actions={<><GrantAwardDialog data={data} onSuccess={refresh} /><ObligationDialog data={data} onSuccess={refresh} /><Link href="/dashboard/super-admin"><Button variant="secondary">Back to dashboard</Button></Link></>} />
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
       <KpiCard label="Active Awards" value={String(data.metrics.activeAwards)} description="Confirmed active grants" icon={HandCoins} />
       <KpiCard label="Reports Due" value={String(data.metrics.reportsDue)} description="Open and overdue" icon={CalendarClock} tone="warning" />
@@ -63,73 +62,9 @@ function ReportsSection({ data, filters, organisations }: { data: GrantReportWor
   </CardContent></Card>;
 }
 
-function AwardsSection({ data }: { data: GrantReportWorkspaceData }) { return <Card className="dark:border-slate-800 dark:bg-slate-900"><CardHeader><CardTitle className="dark:text-white">Grant Awards</CardTitle><CardDescription>Confirmed funding relationships. Awards are never created automatically.</CardDescription></CardHeader><CardContent>{data.awards.length ? <DataTable columns={["Award Number","Centre","Project","Lead Funder / Partner","Awarded","Dates","Status","Tranches","Obligations","Actions"]} rows={data.awards.map((award)=>[<span key="number" className="font-bold">{award.awardNumber}</span>,award.centre,award.project,award.leadOrganisation,formatGrantCurrency(award.awardedAmount,award.currency),`${dateLabel(award.startDate)} – ${dateLabel(award.endDate)}`,<StatusBadge key="status" status={formatGrantLabel(award.status)} />,String(award.trancheCount),String(award.obligationCount),<span key="action" className="text-xs font-semibold text-slate-500">Managed here</span>])} /> : <p className="rounded-lg border border-dashed p-8 text-center text-sm text-slate-500">No confirmed Grant Awards yet. Use “Create Grant Award” to explicitly convert an approved relationship or record a manual agreement.</p>}</CardContent></Card>; }
+function AwardsSection({ data }: { data: GrantReportWorkspaceData }) { return <Card className="dark:border-slate-800 dark:bg-slate-900"><CardHeader><CardTitle className="dark:text-white">Grant Awards</CardTitle><CardDescription>Confirmed funding relationships. Awards are never created automatically.</CardDescription></CardHeader><CardContent>{data.awards.length ? <DataTable columns={["Award Number","Centre","Project","Lead Funder / Partner","Awarded","Dates","Status","Agreement","Tranches","Obligations"]} rows={data.awards.map((award)=>[<span key="number" className="font-bold">{award.awardNumber}</span>,award.centre,award.project,award.leadOrganisation,formatGrantCurrency(award.awardedAmount,award.currency),`${dateLabel(award.startDate)} – ${dateLabel(award.endDate)}`,<StatusBadge key="status" status={formatGrantLabel(award.status)} />,award.signedAgreement?<div key="agreement" className="space-y-1"><p className="max-w-48 truncate text-xs font-semibold" title={award.signedAgreement.originalFilename}>{award.signedAgreement.originalFilename}</p><div className="flex gap-2"><a className="text-xs font-bold text-brand-navy underline" href={`/api/grant-awards/${award.id}/agreement?preview=1`} target="_blank" rel="noreferrer">Preview</a><a className="text-xs font-bold text-brand-navy underline" href={`/api/grant-awards/${award.id}/agreement?download=1`}>Download</a></div></div>:"—",String(award.trancheCount),String(award.obligationCount)])} /> : <p className="rounded-lg border border-dashed p-8 text-center text-sm text-slate-500">No confirmed Grant Awards yet. Use “Create Grant Award” to explicitly convert an approved relationship or record a manual agreement.</p>}</CardContent></Card>; }
 
 function ObligationsSection({ data }: { data: GrantReportWorkspaceData }) { return <Card className="dark:border-slate-800 dark:bg-slate-900"><CardHeader><CardTitle className="dark:text-white">Reporting Obligations</CardTitle><CardDescription>Each obligation creates one Draft report and version 1 for future preparation.</CardDescription></CardHeader><CardContent>{data.obligations.length ? <DataTable columns={["Obligation","Award","Centre","Funder","Type","Basis","Tranche","Due","Status","Report"]} rows={data.obligations.map((item)=>[<span key="title" className="font-bold">{item.title}</span>,item.awardNumber,item.centre,item.funder,reportTypeLabels[item.type],formatGrantLabel(item.basis),item.tranche ? `Tranche ${item.tranche.trancheNumber}` : "—",dateLabel(item.dueAt),<StatusBadge key="status" status={formatGrantLabel(item.status)} />,item.report ? `${formatGrantLabel(item.report.status)} · v${item.report.currentVersionNumber}` : "Not created"])} /> : <p className="rounded-lg border border-dashed p-8 text-center text-sm text-slate-500">No reporting obligations yet. Create an award first, then add its required reporting schedule.</p>}</CardContent></Card>; }
-
-function AwardDialog({ data, onSuccess }: { data: GrantReportWorkspaceData; onSuccess: () => void }) {
-  const sources = { applications: data.options.applications, commitments: data.options.commitments };
-  const centreOptions = Array.from(new Map([
-    ...data.options.centres.map((item) => [item.id, { label: item.centreName, value: item.id }] as const),
-    ...sources.applications.map((item) => [item.centreId, { label: item.centreName, value: item.centreId }] as const),
-    ...sources.commitments.map((item) => [item.centreId, { label: item.centreName, value: item.centreId }] as const),
-  ]).values());
-  const projectOptions = Array.from(new Map([
-    ...data.options.projects.map((item) => [item.id, { label: `${item.centreName} · ${item.title}`, value: item.id }] as const),
-    ...sources.applications.map((item) => [item.projectId, { label: `${item.centreName} · ${item.projectTitle}`, value: item.projectId }] as const),
-    ...sources.commitments.filter((item) => item.fundingProjectId).map((item) => [item.fundingProjectId!, { label: `${item.centreName} · ${item.projectTitle ?? "Funding Project"}`, value: item.fundingProjectId! }] as const),
-  ]).values());
-  const fundingOrganisationOptions = Array.from(new Map([
-    ...data.options.fundingOrganisations.map((item) => [item.id, { label: item.name, value: item.id }] as const),
-    ...sources.applications.filter((item) => item.organisationId).map((item) => [item.organisationId!, { label: item.organisationName ?? "Funding organisation", value: item.organisationId! }] as const),
-  ]).values());
-  const donorOrganisationOptions = Array.from(new Map([
-    ...data.options.donorOrganisations.map((item) => [item.id, { label: item.name, value: item.id }] as const),
-    ...sources.commitments.map((item) => [item.organisationId, { label: item.organisationName, value: item.organisationId }] as const),
-  ]).values());
-  return <WorkflowActionDialog<AwardValues>
-    title="Create Grant Award"
-    description="Explicitly confirm an approved funding relationship. Source-linked relationships are populated automatically and verified again by the server."
-    size="xl"
-    trigger={{ label: "Create Grant Award", icon: <PlusCircle className="h-4 w-4" /> }}
-    confirmationButton={{ label: "Confirm Award", loadingLabel: "Creating…" }}
-    initialValues={{ sourceType:"MANUAL",fundingApplicationId:"",sponsorshipCommitmentId:"",centreId:"",fundingProjectId:"",awardNumber:"",title:"",description:"",awardedAmount:"",currency:"ZAR",startDate:"",endDate:"",organisationType:"FUNDING_ORGANISATION",fundingOrganisationId:"",donorOrganisationId:"",organisationRole:"LEAD_FUNDER",canReview:true,canApprove:false }}
-    onValuesChange={(values, changedField) => updateGrantAwardSource(values, changedField, sources) as AwardValues}
-    validate={(values) => validateGrantAwardSource(values, sources)}
-    fields={(values) => {
-      const sourceState = grantAwardSourceFieldState(values.sourceType);
-      const sourceControlled = sourceState.relationshipFieldsDisabled;
-      const selectedApplication = data.options.applications.find((item) => item.id === values.fundingApplicationId);
-      const selectedCommitment = data.options.commitments.find((item) => item.id === values.sponsorshipCommitmentId);
-      const amountControlled = selectedApplication?.approvedAmount !== null && selectedApplication?.approvedAmount !== undefined
-        || selectedCommitment?.committedAmount !== null && selectedCommitment?.committedAmount !== undefined;
-      return [
-        {name:"sourceType",label:"Source Type",type:"select",required:true,options:[{label:"Manual confirmation",value:"MANUAL"},{label:"Approved Funding Application",value:"FUNDING_APPLICATION"},{label:"Sponsorship Commitment",value:"SPONSORSHIP_COMMITMENT"}]},
-        ...(sourceState.showFundingApplication ? [{name:"fundingApplicationId" as const,label:"Source Funding Application",type:"select" as const,required:true,options:data.options.applications.map((item)=>({label:item.label,value:item.id}))}] : []),
-        ...(sourceState.showSponsorshipCommitment ? [{name:"sponsorshipCommitmentId" as const,label:"Source Sponsorship Commitment",type:"select" as const,required:true,options:data.options.commitments.map((item)=>({label:item.fundingProjectId ? item.label : `${item.label} · FundingProject required`,value:item.id}))}] : []),
-        {name:"centreId",label:"Centre",description:sourceControlled ? "Set by the selected source." : undefined,type:"select",required:true,disabled:sourceControlled,options:centreOptions},
-        {name:"fundingProjectId",label:"Funding Project",description:sourceControlled ? "Set by the selected source." : undefined,type:"select",required:true,disabled:sourceControlled,options:projectOptions},
-        {name:"awardNumber",label:"Award Number",type:"text",required:true,maxLength:100},
-        {name:"title",label:"Title",type:"text",required:true,maxLength:200},
-        {name:"description",label:"Description",type:"textarea",maxLength:5000},
-        {name:"awardedAmount",label:"Awarded Amount",description:amountControlled ? "Set from the authoritative source amount." : undefined,type:"number",required:true,min:0,step:0.01,disabled:amountControlled},
-        {name:"currency",label:"Currency",type:"text",required:true,minLength:3,maxLength:3},
-        {name:"startDate",label:"Start Date",description:"Use YYYY-MM-DD",type:"text",required:true},
-        {name:"endDate",label:"End Date",description:"Optional; use YYYY-MM-DD",type:"text"},
-        {name:"organisationType",label:"Lead Organisation Type",type:"select",required:true,disabled:sourceControlled,options:[{label:"Funding organisation",value:"FUNDING_ORGANISATION"},{label:"Donor organisation",value:"DONOR_ORGANISATION"}]},
-        ...(values.organisationType === "FUNDING_ORGANISATION" ? [{name:"fundingOrganisationId" as const,label:"Funding Organisation",description:sourceControlled ? "Set by the selected source." : undefined,type:"select" as const,required:true,disabled:sourceControlled,options:fundingOrganisationOptions}] : []),
-        ...(values.organisationType === "DONOR_ORGANISATION" ? [{name:"donorOrganisationId" as const,label:"Donor Organisation",description:sourceControlled ? "Set by the selected source." : undefined,type:"select" as const,required:true,disabled:sourceControlled,options:donorOrganisationOptions}] : []),
-        {name:"organisationRole",label:"Organisation Role",type:"select",required:true,options:["LEAD_FUNDER","CO_FUNDER","IMPLEMENTATION_PARTNER","OVERSIGHT_PARTNER"].map((value)=>({label:formatGrantLabel(value),value}))},
-        {name:"canReview",label:"Organisation may review reports",type:"checkbox"},
-        {name:"canApprove",label:"Organisation may approve reports",type:"checkbox"},
-      ];
-    }}
-    action={(values)=>postAction("/api/grant-awards",values)}
-    successToast={{title:"Grant Award created"}}
-    errorToast={{title:"Award creation failed",fallbackDescription:"The award could not be created."}}
-    onSuccess={onSuccess}
-  />;
-}
 
 function ObligationDialog({ data, onSuccess }: { data: GrantReportWorkspaceData; onSuccess: () => void }) {
   const trancheOptions=data.options.awards.flatMap((award)=>award.tranches.map((tranche)=>({label:tranche.label,value:tranche.id})));
