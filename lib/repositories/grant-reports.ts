@@ -127,7 +127,7 @@ export async function getGrantReportWorkspace(filters: GrantReportFiltersInput =
       orderBy: { decidedAt: "desc" },
       take: 200,
     }),
-    prisma.sponsorshipCommitment.findMany({ where: { commitmentStatus: { in: ["Confirmed", "Partially Fulfilled", "Fulfilled"] }, grantAward: null }, select: { id: true, referenceNumber: true, committedAmount: true, donorOrganisationId: true, centreId: true, commitmentStatus: true, donor: { select: { name: true, organisationName: true } }, project: { select: { fundingProjectId: true, title: true } } }, orderBy: { updatedAt: "desc" }, take: 200 }),
+    prisma.sponsorshipCommitment.findMany({ where: { commitmentStatus: { in: ["Confirmed", "Partially Fulfilled", "Fulfilled"] }, grantAward: null }, select: { id: true, referenceNumber: true, committedAmount: true, donorOrganisationId: true, centreId: true, commitmentStatus: true, centre: { select: { centreName: true } }, donor: { select: { name: true, organisationName: true } }, project: { select: { fundingProjectId: true, title: true, fundingProject: { select: { title: true } } } } }, orderBy: { updatedAt: "desc" }, take: 200 }),
   ]);
 
   const counts = new Map(statusGroups.map((group) => [group.status, group._count._all]));
@@ -179,8 +179,30 @@ export async function getGrantReportWorkspace(filters: GrantReportFiltersInput =
       fundingOrganisations,
       donorOrganisations: donorOrganisations.map((organisation) => ({ id: organisation.id, name: organisation.organisationName ?? organisation.name })),
       projects: projects.map((project) => ({ id: project.id, title: project.title, centreId: project.profile.centreId, centreName: project.profile.centre.centreName, requestedAmount: Number(project.requestedAmount) })),
-      applications: applications.map((application) => ({ id: application.id, label: `${application.applicationNumber} · ${application.project.profile.centre.centreName} · ${application.project.title}`, centreId: application.project.profile.centreId, projectId: application.projectId, organisationId: application.fundingOrganisationId, approvedAmount: Number(application.approvedAmount ?? 0) })),
-      commitments: commitments.map((commitment) => ({ id: commitment.id, label: `${commitment.referenceNumber} · ${commitment.donor.organisationName ?? commitment.donor.name}`, centreId: commitment.centreId, fundingProjectId: commitment.project?.fundingProjectId ?? null, organisationId: commitment.donorOrganisationId, committedAmount: Number(commitment.committedAmount ?? 0) })),
+      applications: applications.map((application) => ({
+        id: application.id,
+        applicationNumber: application.applicationNumber,
+        label: `${application.applicationNumber} · ${application.project.profile.centre.centreName} · ${application.project.title}`,
+        centreId: application.project.profile.centreId,
+        centreName: application.project.profile.centre.centreName,
+        projectId: application.projectId,
+        projectTitle: application.project.title,
+        organisationId: application.fundingOrganisationId,
+        organisationName: application.fundingOrganisation?.name ?? null,
+        approvedAmount: application.approvedAmount === null ? null : Number(application.approvedAmount),
+      })),
+      commitments: commitments.map((commitment) => ({
+        id: commitment.id,
+        referenceNumber: commitment.referenceNumber,
+        label: `${commitment.referenceNumber} · ${commitment.donor.organisationName ?? commitment.donor.name}`,
+        centreId: commitment.centreId,
+        centreName: commitment.centre.centreName,
+        fundingProjectId: commitment.project?.fundingProjectId ?? null,
+        projectTitle: commitment.project?.fundingProject?.title ?? null,
+        organisationId: commitment.donorOrganisationId,
+        organisationName: commitment.donor.organisationName ?? commitment.donor.name,
+        committedAmount: commitment.committedAmount === null ? null : Number(commitment.committedAmount),
+      })),
       awards: awards.map((award) => ({ id: award.id, label: `${award.awardNumber} · ${award.centre.centreName} · ${award.fundingProject.title}`, tranches: award.tranches.map((tranche) => ({ id: tranche.id, label: `${award.awardNumber} · Tranche ${tranche.trancheNumber}${tranche.title ? ` · ${tranche.title}` : ""}` })) })),
     },
   };

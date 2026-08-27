@@ -53,8 +53,14 @@ test("duplicate application conversion and mismatched relationships are rejected
   const duplicate = awardTransaction({ grantAward: { id: "existing-award" } });
   await assert.rejects(() => createGrantAward(baseAward, "internal-user-1", runner(duplicate.transaction)), (error: unknown) => error instanceof GrantReportingServiceError && error.status === 409);
 
-  const mismatch = awardTransaction({ fundingOrganisationId: "different-funder" });
-  await assert.rejects(() => createGrantAward(baseAward, "internal-user-1", runner(mismatch.transaction)), /relationship does not match/);
+  for (const overrides of [
+    { fundingOrganisationId: "different-funder" },
+    { projectId: "different-project" },
+    { project: { profile: { centreId: "different-centre" } } },
+  ]) {
+    const mismatch = awardTransaction(overrides);
+    await assert.rejects(() => createGrantAward(baseAward, "internal-user-1", runner(mismatch.transaction)), /relationship does not match/);
+  }
 });
 
 test("a sponsorship commitment without a linked FundingProject is rejected", async () => {

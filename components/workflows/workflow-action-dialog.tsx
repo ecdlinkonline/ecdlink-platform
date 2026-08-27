@@ -77,8 +77,9 @@ export type WorkflowActionDialogProps<TValues extends WorkflowActionValues, TDat
     tone?: "primary" | "warning" | "danger";
   };
   cancelLabel?: string;
-  fields: WorkflowActionField<TValues>[];
+  fields: WorkflowActionField<TValues>[] | ((values: TValues) => WorkflowActionField<TValues>[]);
   initialValues: TValues;
+  onValuesChange?: (values: TValues, changedField: Extract<keyof TValues, string>) => TValues;
   action: (values: TValues) => Promise<WorkflowActionResult<TData>>;
   validate?: (values: TValues) => Partial<Record<keyof TValues, string>>;
   successToast: {
@@ -117,6 +118,7 @@ export function WorkflowActionDialog<TValues extends WorkflowActionValues, TData
   cancelLabel = "Cancel",
   fields,
   initialValues,
+  onValuesChange,
   action,
   validate,
   successToast,
@@ -155,7 +157,10 @@ export function WorkflowActionDialog<TValues extends WorkflowActionValues, TData
   }
 
   function updateValue(name: Extract<keyof TValues, string>, value: string | number | boolean) {
-    setValues((current) => ({ ...current, [name]: value }));
+    setValues((current) => {
+      const next = { ...current, [name]: value };
+      return onValuesChange?.(next, name) ?? next;
+    });
     setFieldErrors((current) => {
       if (!current[name]) return current;
       const next = { ...current };
@@ -167,7 +172,7 @@ export function WorkflowActionDialog<TValues extends WorkflowActionValues, TData
 
   function validateFields() {
     const errors: Record<string, string> = {};
-    for (const field of fields) {
+    for (const field of resolvedFields) {
       const value = values[field.name];
       const empty = typeof value === "string" ? !value.trim() : value === undefined || value === null || value === false;
       if (field.required && empty) errors[field.name] = `${field.label} is required.`;
@@ -186,6 +191,8 @@ export function WorkflowActionDialog<TValues extends WorkflowActionValues, TData
     }
     return errors;
   }
+
+  const resolvedFields = typeof fields === "function" ? fields(values) : fields;
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -240,7 +247,7 @@ export function WorkflowActionDialog<TValues extends WorkflowActionValues, TData
             </CardHeader>
             <CardContent>
               <form className="space-y-4" onSubmit={(event) => void handleSubmit(event)}>
-                {fields.map((field, index) => {
+                {resolvedFields.map((field, index) => {
                   const value = values[field.name];
                   const error = fieldErrors[field.name];
                   const commonProps = { id: `${titleId}-${field.name}`, name: field.name, disabled: isSubmitting || field.disabled, "aria-invalid": Boolean(error), "aria-describedby": error ? `${titleId}-${field.name}-error` : undefined };
