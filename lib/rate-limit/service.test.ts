@@ -2,6 +2,16 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { MemoryRateLimitProvider } from "./memory-provider";
 import { RateLimitService, rateLimitKey } from "./service";
+import { rateLimitConfigDiagnostic } from "./config";
+
+test("configuration diagnostics expose booleans but no connection values", () => {
+  assert.deepEqual(rateLimitConfigDiagnostic({ RATE_LIMIT_PROVIDER: "upstash", RATE_LIMIT_FAIL_MODE: "closed" }), { provider: "upstash", failMode: "closed", urlConfigured: false, tokenConfigured: false, urlValid: false });
+  const invalid = rateLimitConfigDiagnostic({ RATE_LIMIT_PROVIDER: "upstash", RATE_LIMIT_FAIL_MODE: "closed", UPSTASH_REDIS_REST_URL: "not-a-url", UPSTASH_REDIS_REST_TOKEN: "private-token" });
+  assert.equal(invalid.urlConfigured, true);
+  assert.equal(invalid.tokenConfigured, true);
+  assert.equal(invalid.urlValid, false);
+  assert.equal(JSON.stringify(invalid).includes("private-token"), false);
+});
 
 test("policy and internal user both form the stable rate-limit key", () => {
   assert.equal(rateLimitKey("funding_document_upload", "internal-user"), "ecdlink:funding_document_upload:internal-user");

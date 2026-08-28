@@ -2,7 +2,7 @@ import { getRateLimitConfig } from "./config";
 import { MemoryRateLimitProvider } from "./memory-provider";
 import { rateLimitPolicies } from "./policies";
 import type { RateLimitPolicyName, RateLimitProvider, RateLimitResult } from "./types";
-import { UpstashRateLimitProvider } from "./upstash-provider";
+import { UpstashRateLimitProvider, UpstashRateLimitProviderError } from "./upstash-provider";
 
 export function rateLimitKey(policyName: RateLimitPolicyName, identifier: string) {
   return `ecdlink:${rateLimitPolicies[policyName].name}:${identifier}`;
@@ -13,9 +13,10 @@ export class RateLimitService {
   async check(policyName: RateLimitPolicyName, identifier: string): Promise<RateLimitResult> {
     const policy = rateLimitPolicies[policyName];
     try { return await this.provider.consume({ key: rateLimitKey(policyName, identifier), maximum: policy.maximum, windowMs: policy.windowMs, now: this.now() }); }
-    catch {
+    catch (error) {
       const now = this.now();
-      return { allowed: this.failMode === "open", remaining: 0, resetAt: new Date(now.getTime() + policy.windowMs), retryAfterSeconds: Math.ceil(policy.windowMs / 1000), failureReason: "provider_unavailable" };
+      const providerError = error instanceof UpstashRateLimitProviderError ? error : null;
+      return { allowed: this.failMode === "open", remaining: 0, resetAt: new Date(now.getTime() + policy.windowMs), retryAfterSeconds: Math.ceil(policy.windowMs / 1000), failureReason: "provider_unavailable", providerFailureCode: providerError?.code ?? "network", providerHttpStatus: providerError?.httpStatus };
     }
   }
 }

@@ -2,6 +2,7 @@ import { apiError } from "./responses";
 import { getRateLimitService, type RateLimitPolicyName } from "@/lib/rate-limit";
 import { hasTrustedOrigin } from "@/lib/security/trusted-origin";
 import { privateRateLimitIdentifier } from "@/lib/security/request-identity";
+import { rateLimitConfigDiagnostic } from "@/lib/rate-limit/config";
 
 export function requireTrustedOrigin(request: Request) {
   return hasTrustedOrigin(request) ? null : apiError("Request origin is not allowed.", 403);
@@ -18,6 +19,9 @@ export async function enforceRateLimit(policy: RateLimitPolicyName, identifier: 
       remaining: result.remaining,
       retryAfter: result.retryAfterSeconds,
       failureReason: result.failureReason ?? "limit_exceeded",
+      providerFailureCode: result.providerFailureCode,
+      providerHttpStatus: result.providerHttpStatus,
+      configuration: rateLimitConfigDiagnostic(),
     });
   }
   const response = apiError("Too many requests. Please try again later.", 429);
