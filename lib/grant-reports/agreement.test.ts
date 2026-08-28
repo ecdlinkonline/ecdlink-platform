@@ -6,6 +6,7 @@ import { StorageService, type StoragePersistence } from "@/lib/storage/storage-s
 import type { StorageProviderAdapter } from "@/lib/storage/storage-provider";
 import { validateStorageFile } from "@/lib/storage/validation";
 import { grantAwardAgreementPolicy } from "@/lib/services/grant-award-agreements";
+import { restoreFileTriggerFocus } from "./file-input-focus";
 
 function file(name: string, type: string, content: Uint8Array, declaredSize = content.byteLength) {
   const buffer = new ArrayBuffer(content.byteLength);
@@ -55,13 +56,25 @@ test("the business-facing form hides technical organisation controls and exposes
   assert.match(source,/1\. Funding Source[\s\S]*2\. Award Details[\s\S]*3\. Signed Agreement[\s\S]*4\. Reporting Permissions/);
 });
 
+test("PDF selection restores the visible in-modal trigger without scrolling", () => {
+  let focusOptions: FocusOptions | undefined;
+  restoreFileTriggerFocus({ focus: (options) => { focusOptions = options; } });
+  assert.deepEqual(focusOptions, { preventScroll: true });
+  const source = readFileSync("components/reports/grant-award-dialog.tsx","utf8");
+  assert.doesNotMatch(source,/className="sr-only" type="file"/);
+  assert.match(source,/pointer-events-none absolute left-0 top-0 h-px w-px opacity-0/);
+  assert.match(source,/requestAnimationFrame\(\(\)=>restoreFileTriggerFocus\(agreementTriggerRef\.current\)\)/);
+  assert.doesNotMatch(source,/useEffect\([^)]*agreementFile/);
+});
+
 test("agreement upload and private access routes use database-backed Super Admin authorization and return no storage paths", () => {
   const uploadRoute = readFileSync("app/api/grant-awards/agreements/stage/route.ts","utf8");
   const uploadHandler = readFileSync("lib/grant-reports/agreement-stage-route.ts","utf8");
   const accessRoute = readFileSync("app/api/grant-awards/[awardId]/agreement/route.ts","utf8");
   assert.match(uploadRoute,/authorize: requireReportAdmin/);
   assert.match(uploadRoute,/checkOrigin: requireTrustedOrigin/);
-  assert.match(uploadRoute,/enforceRateLimit\("grant_award_agreement_upload", actorUserId\)/);
+  assert.match(uploadRoute,/enforceRateLimit\("grant_award_agreement_upload", actorUserId/);
+  assert.match(uploadRoute,/\[grant-award-rate-limit\]/);
   assert.match(uploadHandler,/dependencies\.authorize\(\)/);
   assert.match(uploadHandler,/context\.internalUser\.id/);
   assert.match(accessRoute,/requireReportAdmin\(\)/);

@@ -15,11 +15,13 @@ test("unauthorized agreement upload is denied before request validation or stora
 });
 
 test("authorized staging returns safe FileAsset metadata without a public or storage URL",async()=>{
+  let rateChecks=0;
   const form=new FormData();
   form.set("file",new File(["%PDF-1"],"agreement.pdf",{type:"application/pdf"}));
-  const response=await createAgreementStageHandler(dependencies())(new Request("https://ecdlink.test/api/grant-awards/agreements/stage",{method:"POST",body:form}));
+  const response=await createAgreementStageHandler(dependencies({checkRateLimit:async()=>{rateChecks+=1;return null;}}))(new Request("https://ecdlink.test/api/grant-awards/agreements/stage",{method:"POST",body:form}));
   const text=await response.text();
   assert.equal(response.status,201);
   assert.doesNotMatch(text,/storageKey|signedUrl|https:\/\//);
   assert.match(text,/agreement\.pdf/);
+  assert.equal(rateChecks,1);
 });

@@ -1,7 +1,21 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { MemoryRateLimitProvider } from "./memory-provider";
-import { RateLimitService } from "./service";
+import { RateLimitService, rateLimitKey } from "./service";
+
+test("policy and internal user both form the stable rate-limit key", () => {
+  assert.equal(rateLimitKey("funding_document_upload", "internal-user"), "ecdlink:funding_document_upload:internal-user");
+  assert.equal(rateLimitKey("grant_award_agreement_upload", "internal-user"), "ecdlink:grant_award_agreement_upload:internal-user");
+  assert.equal(rateLimitKey("grant_award_agreement_upload", "internal-user"), rateLimitKey("grant_award_agreement_upload", "internal-user"));
+  assert.notEqual(rateLimitKey("grant_award_agreement_upload", "internal-user"), rateLimitKey("grant_award_agreement_upload", "other-user"));
+});
+
+test("grant agreement staging has an isolated ten-request window", async () => {
+  const service = new RateLimitService(new MemoryRateLimitProvider(), "closed", () => new Date("2026-01-01T00:00:00Z"));
+  for (let index = 0; index < 10; index++) assert.equal((await service.check("grant_award_agreement_upload", "internal-user")).allowed, true);
+  assert.equal((await service.check("grant_award_agreement_upload", "internal-user")).allowed, false);
+  assert.equal((await service.check("funding_document_upload", "internal-user")).allowed, true);
+});
 
 test("allows under limit and rejects over limit with Retry-After", async () => {
   const service = new RateLimitService(new MemoryRateLimitProvider(), "closed", () => new Date("2026-01-01T00:00:00Z"));
@@ -23,5 +37,7 @@ test("identifiers have independent counters and windows reset", async () => {
 
 test("production-style fail-closed behavior denies provider failures", async () => {
   const service = new RateLimitService({ consume: async () => { throw new Error("provider secret"); } }, "closed");
-  assert.equal((await service.check("funding_decision", "actor")).allowed, false);
+  const result = await service.check("funding_decision", "actor");
+  assert.equal(result.allowed, false);
+  assert.equal(result.failureReason, "provider_unavailable");
 });
