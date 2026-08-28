@@ -60,9 +60,12 @@ test("agreement upload and private access routes use database-backed Super Admin
   const uploadHandler = readFileSync("lib/grant-reports/agreement-stage-route.ts","utf8");
   const accessRoute = readFileSync("app/api/grant-awards/[awardId]/agreement/route.ts","utf8");
   assert.match(uploadRoute,/authorize: requireReportAdmin/);
+  assert.match(uploadRoute,/checkOrigin: requireTrustedOrigin/);
+  assert.match(uploadRoute,/enforceRateLimit\("grant_award_agreement_upload", actorUserId\)/);
   assert.match(uploadHandler,/dependencies\.authorize\(\)/);
   assert.match(uploadHandler,/context\.internalUser\.id/);
   assert.match(accessRoute,/requireReportAdmin\(\)/);
   assert.doesNotMatch(uploadRoute + uploadHandler + accessRoute,/unsafeMetadata|publicMetadata|storageKey|DATABASE_URL/);
+  assert.doesNotMatch(uploadRoute,/\*\.vercel\.app|TRUSTED_APP_ORIGINS/);
   assert.match(accessRoute,/NextResponse\.redirect\(access\.url, 302\)/);
 });

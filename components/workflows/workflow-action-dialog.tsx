@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { useToast } from "@/components/design-system";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import { beginSubmission, endSubmission } from "@/lib/workflows/submission-gate";
 
 export type WorkflowActionValues = Record<string, string | number | boolean>;
 
@@ -138,39 +139,56 @@ export function WorkflowActionDialog<TValues extends WorkflowActionValues, TData
   const descriptionId = useId();
   const triggerRef = useRef<HTMLSpanElement>(null);
   const firstFieldRef = useRef<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(null);
+  const scrollBodyRef = useRef<HTMLDivElement>(null);
+  const submittingRef = useRef(false);
   const [open, setOpen] = useState(false);
   const [values, setValues] = useState<TValues>(initialValues);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  useEffect(() => {
-    if (!open) return;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = previousOverflow;
-    };
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    firstFieldRef.current?.focus();
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && (!isSubmitting || canCloseWhileLoading)) closeDialog();
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  });
-
-  function closeDialog() {
+  const closeDialog = useCallback(() => {
     if (isSubmitting && !canCloseWhileLoading) return;
     setOpen(false);
     setValues(initialValues);
     setFieldErrors({});
     setFormError(null);
     window.setTimeout(() => triggerRef.current?.querySelector("button")?.focus(), 0);
-  }
+  }, [canCloseWhileLoading, initialValues, isSubmitting]);
+
+  useEffect(() => {
+    if (!open) return;
+    const scrollY = window.scrollY;
+    const previousOverflow = document.body.style.overflow;
+    const previousPosition = document.body.style.position;
+    const previousTop = document.body.style.top;
+    const previousWidth = document.body.style.width;
+    document.body.style.overflow = "hidden";
+    document.body.style.position = "fixed";
+    document.body.style.top = `-${scrollY}px`;
+    document.body.style.width = "100%";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.body.style.position = previousPosition;
+      document.body.style.top = previousTop;
+      document.body.style.width = previousWidth;
+      window.scrollTo({ top: scrollY, behavior: "instant" });
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    firstFieldRef.current?.focus({ preventScroll: true });
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && (!isSubmitting || canCloseWhileLoading)) closeDialog();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [open, isSubmitting, canCloseWhileLoading, closeDialog]);
 
   function updateValue(name: Extract<keyof TValues, string>, value: string | number | boolean) {
     setValues((current) => {
@@ -212,12 +230,24 @@ export function WorkflowActionDialog<TValues extends WorkflowActionValues, TData
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (submittingRef.current) return;
     const errors = validateFields();
     if (Object.keys(errors).length) {
       setFieldErrors(errors);
+      const firstInvalidName = Object.keys(errors)[0];
+      window.requestAnimationFrame(() => {
+        const scrollBody = scrollBodyRef.current;
+        const invalidField = Array.from(scrollBody?.querySelectorAll<HTMLElement>("[name]") ?? []).find((field) => field.getAttribute("name") === firstInvalidName);
+        if (!scrollBody || !invalidField) return;
+        invalidField.focus({ preventScroll: true });
+        const bodyRect = scrollBody.getBoundingClientRect();
+        const fieldRect = invalidField.getBoundingClientRect();
+        scrollBody.scrollTo({ top: scrollBody.scrollTop + fieldRect.top - bodyRect.top - 16, behavior: "smooth" });
+      });
       return;
     }
 
+    if (!beginSubmission(submittingRef)) return;
     setIsSubmitting(true);
     setFormError(null);
     try {
@@ -241,6 +271,7 @@ export function WorkflowActionDialog<TValues extends WorkflowActionValues, TData
       setFormError(message);
       pushToast({ title: errorToast?.title ?? "Action failed", description: message });
     } finally {
+      endSubmission(submittingRef);
       setIsSubmitting(false);
     }
   }
@@ -255,14 +286,14 @@ export function WorkflowActionDialog<TValues extends WorkflowActionValues, TData
       </span>
 
       {open ? (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center overflow-hidden bg-slate-950/60 p-2 sm:p-4" role="presentation">
-          <Card role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={description ? descriptionId : undefined} className={cn("flex max-h-[calc(100dvh-1rem)] min-h-0 w-full flex-col overflow-hidden sm:max-h-[90dvh] dark:border-slate-800 dark:bg-slate-900", sizeClasses[size])}>
+        <div className="fixed inset-0 z-[70] flex h-[100dvh] max-h-[100dvh] items-center justify-center overflow-hidden bg-slate-950/60 p-2 sm:p-4" role="presentation">
+          <Card role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={description ? descriptionId : undefined} className={cn("relative flex max-h-[calc(100dvh-1rem)] min-h-0 w-full flex-col overflow-hidden sm:max-h-[90dvh] dark:border-slate-800 dark:bg-slate-900", sizeClasses[size])}>
             <CardHeader className="shrink-0">
               <CardTitle id={titleId} className="dark:text-white">{title}</CardTitle>
               {description ? <CardDescription id={descriptionId} className="dark:text-slate-400">{description}</CardDescription> : null}
             </CardHeader>
             <form className="flex min-h-0 flex-1 flex-col overflow-hidden" onSubmit={(event) => void handleSubmit(event)}>
-              <div data-workflow-dialog-scroll-body className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain bg-white px-5 pb-5 pt-3 dark:bg-slate-900">
+              <div ref={scrollBodyRef} data-workflow-dialog-scroll-body className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain bg-white px-5 pb-5 pt-3 dark:bg-slate-900">
               {renderFields?.({ values, updateValue, fieldErrors, disabled: isSubmitting })}
               {resolvedFields.map((field, index) => {
                 const value = values[field.name];

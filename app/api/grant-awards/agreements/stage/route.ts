@@ -7,7 +7,7 @@ import { createAgreementStageHandler } from "@/lib/grant-reports/agreement-stage
 export const POST = createAgreementStageHandler({
   authorize: requireReportAdmin,
   checkOrigin: requireTrustedOrigin,
-  checkRateLimit: (actorUserId) => enforceRateLimit("funding_document_upload", actorUserId),
+  checkRateLimit: (actorUserId) => enforceRateLimit("grant_award_agreement_upload", actorUserId),
   validateRequest: validateUploadRequest,
   stage: stageGrantAwardAgreement,
 });
