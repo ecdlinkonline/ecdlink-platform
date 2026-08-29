@@ -371,7 +371,7 @@ export async function getGrantReportEditor(reportId: string) {
     },
     quarterlyExpenditure: {
       incomeRows: incomeLines.length ? incomeLines.map((row) => ({ id: row.id, lineType: row.lineType as "FUNDING_RECEIVED" | "OTHER_INCOME", categoryName: row.categoryName, amount: decimalString(row.quarterlyActual) })) : [
-        { lineType: "FUNDING_RECEIVED" as const, categoryName: "Funding received from Department / subsidy", amount: suggestedFundingReceived },
+        { lineType: "FUNDING_RECEIVED" as const, categoryName: "Funding received from Department / Subsidy", amount: suggestedFundingReceived },
         { lineType: "OTHER_INCOME" as const, categoryName: "Other Income", amount: null },
       ],
       expenditureRows: expenditureLines.length ? expenditureLines.map((row) => ({ id: row.id, categoryName: row.categoryName, costingFrameworkPercentage: decimalString(row.costingFrameworkPercentage), quarterlyBudget: decimalString(row.quarterlyBudget), fundingSourceActual: decimalString(row.fundingSourceActual), otherSourceActual: decimalString(row.otherSourceActual), quarterlyActual: decimalString(row.quarterlyActual) ?? "0.00" })) : dbeQuarterlyExpenditureCategories.map((categoryName) => ({ categoryName, costingFrameworkPercentage: null, quarterlyBudget: null, fundingSourceActual: null, otherSourceActual: null, quarterlyActual: "0.00" })),

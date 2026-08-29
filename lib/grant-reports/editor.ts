@@ -55,6 +55,29 @@ export function resolveGrantReportTemplate(reportType: string) {
   return "COMING_SOON";
 }
 
+export function buildQuarterlyExpenditureSubtitle(input: {
+  reportTitle: string;
+  centreName: string | null;
+  leadOrganisation: string | null;
+  financialYear: string | null;
+  quarter: number | null;
+}) {
+  const quarterContext = input.quarter && input.financialYear ? `Q${input.quarter} ${input.financialYear}` : null;
+  const strippedTitle = input.reportTitle.trim().replace(/^Quarterly Expenditure Report\s*(?:[-–—:]\s*)?/i, "").trim();
+  const usefulTitle = strippedTitle && strippedTitle.toLocaleLowerCase() !== quarterContext?.toLocaleLowerCase() ? strippedTitle : null;
+  const seen = new Set<string>();
+
+  return [usefulTitle, input.centreName, input.leadOrganisation, quarterContext]
+    .filter((value): value is string => Boolean(value?.trim()))
+    .filter((value) => {
+      const normalized = value.trim().toLocaleLowerCase();
+      if (seen.has(normalized)) return false;
+      seen.add(normalized);
+      return true;
+    })
+    .join(" · ");
+}
+
 export function isGrantReportVersionEditable(reportStatus: string, versionStatus: string) {
   return versionStatus === "DRAFT" && !["SUBMITTED", "APPROVED", "ARCHIVED"].includes(reportStatus);
 }

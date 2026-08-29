@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildSuggestedGrantIndicators, calculateRacialColumnTotals, grantReportCompletion, isGrantReportVersionEditable, quarterlyExpenditureCompletion, quarterlyExpenditureTotals, resolveGrantReportTemplate, subtractGrantAmounts, sumGrantAmounts } from "./editor";
+import { buildQuarterlyExpenditureSubtitle, buildSuggestedGrantIndicators, calculateRacialColumnTotals, grantReportCompletion, isGrantReportVersionEditable, quarterlyExpenditureCompletion, quarterlyExpenditureTotals, resolveGrantReportTemplate, subtractGrantAmounts, sumGrantAmounts } from "./editor";
 
 test("Interim and Final resolve to the shared NLC template", () => {
   assert.equal(resolveGrantReportTemplate("INTERIM"), "NLC");
@@ -17,6 +17,12 @@ test("quarterly income and source-split expenditure calculations use integer cen
   ]);
   assert.deepEqual(totals, { totalAllocatedBudget: "1500.10", totalFundingSourceExpenditure: "300.09", totalOtherSourceExpenditure: "50.01", totalExpenditure: "350.10" });
   assert.equal(subtractGrantAmounts("1200.19", totals.totalExpenditure!), "850.09");
+});
+
+test("quarterly report subtitles omit the standard title and duplicate quarter context", () => {
+  const context = { centreName: "Future Leaders", leadOrganisation: "Western Cape ECD Fund", financialYear: "2026", quarter: 1 };
+  assert.equal(buildQuarterlyExpenditureSubtitle({ ...context, reportTitle: "Quarterly Expenditure Report - Q1 2026" }), "Future Leaders · Western Cape ECD Fund · Q1 2026");
+  assert.equal(buildQuarterlyExpenditureSubtitle({ ...context, reportTitle: "Nutrition programme update" }), "Nutrition programme update · Future Leaders · Western Cape ECD Fund · Q1 2026");
 });
 
 test("quarterly readiness requires general, income, expenditure, bank and certification sections", () => {
