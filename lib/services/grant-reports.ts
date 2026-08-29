@@ -1,6 +1,6 @@
 import type { Prisma } from "@prisma/client";
-import { withGrantReportingTransaction } from "@/lib/repositories/grant-reports";
-import type { CreateGrantAwardInput, CreateGrantReportingObligationInput } from "@/lib/validators/grant-reports";
+import { getGrantReportEditor, withGrantReportingTransaction } from "@/lib/repositories/grant-reports";
+import type { CreateGrantAwardInput, CreateGrantReportingObligationInput, SaveGrantReportSectionInput } from "@/lib/validators/grant-reports";
 import { GRANT_AWARD_STAGING_ENTITY } from "@/lib/services/grant-award-agreements";
 
 export class GrantReportingServiceError extends Error {
@@ -114,4 +114,127 @@ export async function createGrantReportingObligation(input: CreateGrantReporting
     await tx.auditLog.create({ data: { actorUserId, action: "grant.reporting_obligation.create", entityType: "GrantReportingObligation", entityId: obligation.id, after: json(obligation), metadata: json({ grantAwardId: award.id, reportId: report.id, initialVersion: 1 }) } });
     return { obligation, report };
   });
+}
+
+const certificationConfirmationText = "I confirm that the information in this grant report is accurate and complete to the best of my knowledge.";
+
+export async function requireMutableGrantReport(tx: Prisma.TransactionClient, reportId: string) {
+  const report = await tx.grantReport.findUnique({
+    where: { id: reportId },
+    select: {
+      id: true,
+      status: true,
+      currentVersionNumber: true,
+      award: {
+        select: {
+          id: true,
+          awardNumber: true,
+          title: true,
+          awardedAmount: true,
+          currency: true,
+          centre: { select: { id: true, centreName: true, physicalAddress: true, suburb: true, area: true, province: true, postalCode: true, contactPerson: true, phone: true, email: true } },
+          fundingProject: { select: { id: true, title: true, objective: true, expectedOutcomes: true, requiredItems: true } },
+          organisations: { where: { removedAt: null }, orderBy: [{ isPrimary: "desc" as const }, { addedAt: "asc" as const }], include: { fundingOrganisation: { select: { id: true, name: true } }, donorOrganisation: { select: { id: true, name: true, organisationName: true } } } },
+        },
+      },
+      obligation: { select: { tranche: { select: { id: true, trancheNumber: true, scheduledAmount: true, title: true } } } },
+    },
+  });
+  if (!report) throw new GrantReportingServiceError("Grant report not found.", 404);
+  const version = await tx.grantReportVersion.findUnique({ where: { grantReportId_versionNumber: { grantReportId: report.id, versionNumber: report.currentVersionNumber } } });
+  if (!version) throw new GrantReportingServiceError("The current report version was not found.", 404);
+  if (version.status !== "DRAFT" || ["SUBMITTED", "APPROVED", "ARCHIVED"].includes(report.status)) {
+    throw new GrantReportingServiceError("This report version is immutable and cannot be edited.", 409);
+  }
+  if (version.reportType !== "INTERIM" && version.reportType !== "FINAL") {
+    throw new GrantReportingServiceError("This report template is not available in the current phase.", 422);
+  }
+  return { report, version };
+}
+
+export async function saveGrantReportSection(
+  reportId: string,
+  input: SaveGrantReportSectionInput,
+  actorUserId: string,
+  runTransaction: GrantReportingTransactionRunner = withGrantReportingTransaction,
+  reload: typeof getGrantReportEditor = getGrantReportEditor,
+) {
+  await runTransaction(async (tx) => {
+    const { report, version } = await requireMutableGrantReport(tx, reportId);
+    if (input.section === "general") {
+      const centre = report.award.centre;
+      const project = report.award.fundingProject;
+      const lead = report.award.organisations[0];
+      const leadName = lead?.fundingOrganisation?.name ?? lead?.donorOrganisation?.organisationName ?? lead?.donorOrganisation?.name ?? null;
+      const physicalAddress = [centre.physicalAddress, centre.suburb, centre.area, centre.province, centre.postalCode].filter(Boolean).join(", ") || null;
+      await tx.grantReportVersion.update({
+        where: { id: version.id },
+        data: {
+          reportingPeriodStart: input.data.reportingPeriodStart ? new Date(`${input.data.reportingPeriodStart}T00:00:00.000Z`) : null,
+          reportingPeriodEnd: input.data.reportingPeriodEnd ? new Date(`${input.data.reportingPeriodEnd}T00:00:00.000Z`) : null,
+          previousTrancheBalance: input.data.previousTrancheBalance,
+          centreSnapshot: version.centreSnapshot ?? json({ id: centre.id, centreName: centre.centreName, physicalAddress, contactPerson: centre.contactPerson, phone: centre.phone, email: centre.email }),
+          projectSnapshot: version.projectSnapshot ?? json({ id: project.id, title: project.title, objective: project.objective, expectedOutcomes: project.expectedOutcomes, requiredItems: project.requiredItems }),
+          awardSnapshot: version.awardSnapshot ?? json({ id: report.award.id, awardNumber: report.award.awardNumber, title: report.award.title, awardedAmount: report.award.awardedAmount, currency: report.award.currency }),
+          fundingOrganisationSnapshot: version.fundingOrganisationSnapshot ?? json({ name: leadName, organisationType: lead?.organisationType ?? null, fundingOrganisationId: lead?.fundingOrganisationId ?? null, donorOrganisationId: lead?.donorOrganisationId ?? null }),
+          trancheSnapshot: version.trancheSnapshot ?? (report.obligation.tranche ? json({ id: report.obligation.tranche.id, trancheNumber: report.obligation.tranche.trancheNumber, scheduledAmount: report.obligation.tranche.scheduledAmount, title: report.obligation.tranche.title }) : undefined),
+        },
+      });
+    } else if (input.section === "objectives") {
+      const existing = await tx.grantReportIndicator.findMany({ where: { grantReportVersionId: version.id }, select: { id: true, _count: { select: { documents: true } } } });
+      const requestedIds = input.data.rows.flatMap((row) => row.id ? [row.id] : []);
+      if (new Set(requestedIds).size !== requestedIds.length || requestedIds.some((id) => !existing.some((row) => row.id === id))) throw new GrantReportingServiceError("One or more indicator rows do not belong to this report version.", 422);
+      const removed = existing.filter((row) => !requestedIds.includes(row.id));
+      if (removed.some((row) => row._count.documents > 0)) throw new GrantReportingServiceError("An indicator with linked evidence cannot be removed.", 409);
+      if (removed.length) await tx.grantReportIndicator.deleteMany({ where: { id: { in: removed.map((row) => row.id) }, grantReportVersionId: version.id } });
+      for (const [displayOrder, row] of input.data.rows.entries()) {
+        const data = { objective: row.objective, deliverable: row.deliverable, indicator: row.deliverable || row.objective, achieved: row.achieved, status: row.status, meansOfVerification: row.meansOfVerification, displayOrder };
+        if (row.id) await tx.grantReportIndicator.update({ where: { id: row.id }, data });
+        else await tx.grantReportIndicator.create({ data: { ...data, grantReportVersionId: version.id } });
+      }
+    } else if (input.section === "beneficiaries") {
+      await tx.grantReportBeneficiaryBreakdown.deleteMany({ where: { grantReportVersionId: version.id } });
+      await tx.grantReportRacialProfileRow.deleteMany({ where: { grantReportVersionId: version.id } });
+      await tx.grantReportBeneficiaryBreakdown.createMany({ data: input.data.beneficiaries.map((row, displayOrder) => ({ ...row, grantReportVersionId: version.id, displayOrder })) });
+      await tx.grantReportRacialProfileRow.createMany({ data: input.data.racialRows.map((row, displayOrder) => ({ ...row, grantReportVersionId: version.id, displayOrder })) });
+    } else if (input.section === "sustainability") {
+      await tx.grantReportVersion.update({ where: { id: version.id }, data: { challenges: input.data.challenges, organisationalChanges: input.data.organisationalChanges, communityChanges: input.data.communityChanges } });
+      await tx.grantReportSustainabilityItem.deleteMany({ where: { grantReportVersionId: version.id } });
+      if (input.data.rows.length) await tx.grantReportSustainabilityItem.createMany({ data: input.data.rows.map((row, displayOrder) => ({ grantReportVersionId: version.id, plan: row.plan, progressToDate: row.progressToDate, displayOrder })) });
+    } else if (input.section === "financial") {
+      await tx.grantReportVersion.update({ where: { id: version.id }, data: { fundingReceivedTotal: input.data.fundingReceivedTotal, previousTrancheBalance: input.data.previousTrancheBalance, quarterlyExpenditureTotal: input.data.quarterlyExpenditureTotal } });
+      const existing = await tx.grantReportFinancialLine.findMany({ where: { grantReportVersionId: version.id }, select: { id: true, _count: { select: { documents: true, expenseEntries: true } } } });
+      const requestedIds = input.data.rows.flatMap((row) => row.id ? [row.id] : []);
+      if (new Set(requestedIds).size !== requestedIds.length || requestedIds.some((id) => !existing.some((row) => row.id === id))) throw new GrantReportingServiceError("One or more financial rows do not belong to this report version.", 422);
+      const removed = existing.filter((row) => !requestedIds.includes(row.id));
+      if (removed.some((row) => row._count.documents > 0 || row._count.expenseEntries > 0)) throw new GrantReportingServiceError("A financial row with linked evidence or expense entries cannot be removed.", 409);
+      if (removed.length) await tx.grantReportFinancialLine.deleteMany({ where: { id: { in: removed.map((row) => row.id) }, grantReportVersionId: version.id } });
+      for (const [displayOrder, row] of input.data.rows.entries()) {
+        const data = { lineType: "EXPENDITURE" as const, categoryName: row.categoryName, description: row.description, approvedBudget: row.approvedBudget, quarterlyActual: row.quarterlyActual, displayOrder };
+        if (row.id) await tx.grantReportFinancialLine.update({ where: { id: row.id }, data });
+        else await tx.grantReportFinancialLine.create({ data: { ...data, grantReportVersionId: version.id } });
+      }
+    } else if (input.section === "certification") {
+      const confirmedAt = new Date();
+      await tx.grantReportCertification.deleteMany({ where: { grantReportVersionId: version.id } });
+      await tx.grantReportCertification.createMany({ data: input.data.rows.map((row, displayOrder) => ({
+        grantReportVersionId: version.id,
+        party: row.party,
+        nameSnapshot: row.nameSnapshot,
+        designationSnapshot: row.designationSnapshot,
+        certificationDate: row.certificationDate ? new Date(`${row.certificationDate}T00:00:00.000Z`) : null,
+        digitallyConfirmed: row.digitallyConfirmed,
+        confirmedByUserId: row.digitallyConfirmed ? actorUserId : null,
+        confirmedAt: row.digitallyConfirmed ? confirmedAt : null,
+        confirmationTextSnapshot: row.digitallyConfirmed ? certificationConfirmationText : null,
+        displayOrder,
+      })) });
+      const allConfirmed = input.data.rows.every((row) => row.digitallyConfirmed);
+      await tx.grantReportVersion.update({ where: { id: version.id }, data: { certificationAcknowledged: allConfirmed, certificationTextSnapshot: allConfirmed ? certificationConfirmationText : null } });
+    }
+    await tx.auditLog.create({ data: { actorUserId, action: "grant.report.section.saved", entityType: "GrantReportVersion", entityId: version.id, metadata: json({ reportId, versionNumber: version.versionNumber, section: input.section }) } });
+  });
+  const updated = await reload(reportId);
+  if (!updated) throw new GrantReportingServiceError("The updated report could not be loaded.", 500);
+  return updated;
 }

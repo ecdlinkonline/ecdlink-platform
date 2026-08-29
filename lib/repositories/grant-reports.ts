@@ -1,7 +1,8 @@
 import "server-only";
 
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
+import { buildSuggestedGrantIndicators, grantReportCompletion, resolveGrantReportTemplate } from "@/lib/grant-reports/editor";
 import type { GrantReportFiltersInput } from "@/lib/validators/grant-reports";
 
 export function withGrantReportingTransaction<T>(operation: (tx: Prisma.TransactionClient) => Promise<T>) {
@@ -215,5 +216,144 @@ export async function getGrantReportWorkspace(filters: GrantReportFiltersInput =
       })),
       awards: awards.map((award) => ({ id: award.id, label: `${award.awardNumber} · ${award.centre.centreName} · ${award.fundingProject.title}`, tranches: award.tranches.map((tranche) => ({ id: tranche.id, label: `${award.awardNumber} · Tranche ${tranche.trancheNumber}${tranche.title ? ` · ${tranche.title}` : ""}` })) })),
     },
+  };
+}
+
+function recordValue(value: Prisma.JsonValue | null): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+function snapshotString(snapshot: Record<string, unknown> | null, key: string) {
+  const value = snapshot?.[key];
+  return typeof value === "string" ? value : null;
+}
+
+function decimalString(value: Prisma.Decimal | null | undefined) {
+  return value?.toFixed(2) ?? null;
+}
+
+export async function getGrantReportEditor(reportId: string) {
+  const report = await prisma.grantReport.findUnique({
+    where: { id: reportId },
+    select: {
+      id: true,
+      status: true,
+      currentVersionNumber: true,
+      obligation: { select: { id: true, title: true, type: true, dueAt: true, reportingPeriodStart: true, reportingPeriodEnd: true, tranche: { select: { id: true, trancheNumber: true, scheduledAmount: true } } } },
+      award: {
+        select: {
+          id: true,
+          awardNumber: true,
+          title: true,
+          awardedAmount: true,
+          currency: true,
+          centre: { select: { id: true, centreName: true, physicalAddress: true, suburb: true, area: true, province: true, postalCode: true, contactPerson: true, phone: true, email: true } },
+          fundingProject: { select: { id: true, title: true, objective: true, expectedOutcomes: true, requiredItems: true } },
+          organisations: partyInclude,
+        },
+      },
+    },
+  });
+  if (!report) return null;
+
+  const version = await prisma.grantReportVersion.findUnique({
+    where: { grantReportId_versionNumber: { grantReportId: report.id, versionNumber: report.currentVersionNumber } },
+    include: {
+      indicators: { orderBy: [{ displayOrder: "asc" }, { createdAt: "asc" }] },
+      beneficiaryBreakdowns: { orderBy: [{ displayOrder: "asc" }, { createdAt: "asc" }] },
+      racialProfileRows: { orderBy: [{ displayOrder: "asc" }, { createdAt: "asc" }] },
+      sustainabilityItems: { orderBy: [{ displayOrder: "asc" }, { createdAt: "asc" }] },
+      financialLines: { orderBy: [{ displayOrder: "asc" }, { createdAt: "asc" }] },
+      certifications: { include: { confirmedBy: { select: { firstName: true, lastName: true, email: true } } }, orderBy: [{ displayOrder: "asc" }, { createdAt: "asc" }] },
+      documents: { include: { file: { select: { originalFilename: true, mimeType: true, fileSize: true, createdAt: true } }, indicator: { select: { id: true, objective: true } }, uploadedBy: { select: { firstName: true, lastName: true, email: true } } }, orderBy: { uploadedAt: "desc" } },
+    },
+  });
+  if (!version) return null;
+
+  const editable = version.status === "DRAFT" && !["SUBMITTED", "APPROVED", "ARCHIVED"].includes(report.status);
+  const periodStart = version.reportingPeriodStart ?? (editable ? report.obligation.reportingPeriodStart : null);
+  const periodEnd = version.reportingPeriodEnd ?? (editable ? report.obligation.reportingPeriodEnd : null);
+  const dateFilter = periodStart || periodEnd ? { gte: periodStart ?? undefined, lte: periodEnd ?? undefined } : undefined;
+  const canSuggestPeriodTotals = editable && Boolean(periodStart && periodEnd);
+  const [received, spent] = await Promise.all([
+    canSuggestPeriodTotals ? prisma.grantDisbursement.aggregate({ where: { grantAwardId: report.award.id, receivedAt: dateFilter }, _sum: { amountReceived: true } }) : Promise.resolve({ _sum: { amountReceived: null } }),
+    canSuggestPeriodTotals ? prisma.grantExpenseAllocation.aggregate({ where: { grantAwardId: report.award.id, reversedAt: null, allocationDate: dateFilter }, _sum: { allocatedAmount: true } }) : Promise.resolve({ _sum: { allocatedAmount: null } }),
+  ]);
+
+  const centreSnapshot = recordValue(version.centreSnapshot);
+  const awardSnapshot = recordValue(version.awardSnapshot);
+  const projectSnapshot = recordValue(version.projectSnapshot);
+  const organisationSnapshot = recordValue(version.fundingOrganisationSnapshot);
+  const useCurrentFallback = editable;
+  const addressParts = [report.award.centre.physicalAddress, report.award.centre.suburb, report.award.centre.area, report.award.centre.province, report.award.centre.postalCode].filter(Boolean);
+  const currentParty = partyName(report.award.organisations);
+
+  const suggestedIndicators = buildSuggestedGrantIndicators(report.award.fundingProject, version.indicators.length);
+
+  const documents = version.documents.map((document) => ({
+    id: document.id,
+    documentType: document.documentType,
+    title: document.title,
+    description: document.description,
+    indicatorId: document.indicatorId,
+    indicator: document.indicator?.objective ?? null,
+    originalFilename: document.file.originalFilename,
+    mimeType: document.file.mimeType,
+    fileSize: document.file.fileSize,
+    uploadedAt: document.uploadedAt.toISOString(),
+    uploadedBy: [document.uploadedBy.firstName, document.uploadedBy.lastName].filter(Boolean).join(" ") || document.uploadedBy.email || "Internal user",
+  }));
+  const completion = grantReportCompletion({
+    reportType: version.reportType,
+    reportingPeriodStart: dateValue(version.reportingPeriodStart),
+    reportingPeriodEnd: dateValue(version.reportingPeriodEnd),
+    indicatorCount: version.indicators.length,
+    beneficiaryCount: version.beneficiaryBreakdowns.length,
+    racialRowCount: version.racialProfileRows.length,
+    challenges: version.challenges,
+    sustainabilityCount: version.sustainabilityItems.length,
+    financialLineCount: version.financialLines.length,
+    certificationCount: version.certifications.length,
+    confirmedCertificationCount: version.certifications.filter((item) => item.digitallyConfirmed).length,
+    hasAuditedFinancialStatements: documents.some((document) => document.documentType === "AUDITED_FINANCIAL_STATEMENTS"),
+  });
+
+  return {
+    report: { id: report.id, title: report.obligation.title, status: report.status, type: version.reportType, template: resolveGrantReportTemplate(version.reportType), dueAt: report.obligation.dueAt.toISOString() },
+    version: { id: version.id, versionNumber: version.versionNumber, status: version.status, editable, currency: version.currency, completion },
+    general: {
+      reportType: version.reportType,
+      awardNumber: snapshotString(awardSnapshot, "awardNumber") ?? (useCurrentFallback ? report.award.awardNumber : null),
+      projectTitle: snapshotString(projectSnapshot, "title") ?? (useCurrentFallback ? report.award.fundingProject.title : null),
+      sector: null,
+      centreName: snapshotString(centreSnapshot, "centreName") ?? (useCurrentFallback ? report.award.centre.centreName : null),
+      physicalAddress: snapshotString(centreSnapshot, "physicalAddress") ?? (useCurrentFallback ? addressParts.join(", ") || null : null),
+      contactPerson: snapshotString(centreSnapshot, "contactPerson") ?? (useCurrentFallback ? report.award.centre.contactPerson : null),
+      telephone: snapshotString(centreSnapshot, "phone") ?? (useCurrentFallback ? report.award.centre.phone : null),
+      email: snapshotString(centreSnapshot, "email") ?? (useCurrentFallback ? report.award.centre.email : null),
+      leadOrganisation: snapshotString(organisationSnapshot, "name") ?? (useCurrentFallback ? currentParty : null),
+      reportingPeriodStart: dateValue(version.reportingPeriodStart),
+      reportingPeriodEnd: dateValue(version.reportingPeriodEnd),
+      trancheNumber: version.trancheNumberSnapshot ?? (useCurrentFallback ? report.obligation.tranche?.trancheNumber : null) ?? null,
+      trancheAmount: decimalString(version.trancheAmountSnapshot ?? (useCurrentFallback ? report.obligation.tranche?.scheduledAmount : null)),
+      previousTrancheBalance: decimalString(version.previousTrancheBalance),
+    },
+    indicators: version.indicators.map((row) => ({ id: row.id, objective: row.objective, deliverable: row.deliverable, achieved: row.achieved, status: row.status, meansOfVerification: row.meansOfVerification })),
+    suggestedIndicators,
+    beneficiaries: version.beneficiaryBreakdowns.map((row) => ({ category: row.category, total: row.total, male: row.male, female: row.female })),
+    racialRows: version.racialProfileRows.map((row) => ({ racialGroup: row.racialGroup, children: row.children, youth: row.youth, men: row.men, women: row.women, olderPersons: row.olderPersons, peopleWithDisabilities: row.peopleWithDisabilities })),
+    sustainability: { challenges: version.challenges, organisationalChanges: version.organisationalChanges, communityChanges: version.communityChanges, rows: version.sustainabilityItems.map((row) => ({ id: row.id, plan: row.plan, progressToDate: row.progressToDate })) },
+    financial: {
+      totalGrantValue: snapshotString(awardSnapshot, "awardedAmount") ?? (useCurrentFallback ? report.award.awardedAmount.toFixed(2) : null),
+      fundingReceivedTotal: version.fundingReceivedTotal.toFixed(2),
+      previousTrancheBalance: decimalString(version.previousTrancheBalance),
+      quarterlyExpenditureTotal: version.quarterlyExpenditureTotal.toFixed(2),
+      suggestedFundingReceivedTotal: canSuggestPeriodTotals ? (received._sum.amountReceived ?? new Prisma.Decimal(0)).toFixed(2) : null,
+      suggestedQuarterlyExpenditureTotal: canSuggestPeriodTotals ? (spent._sum.allocatedAmount ?? new Prisma.Decimal(0)).toFixed(2) : null,
+      rows: version.financialLines.map((row) => ({ id: row.id, categoryName: row.categoryName, description: row.description, approvedBudget: decimalString(row.approvedBudget), quarterlyActual: decimalString(row.quarterlyActual) })),
+    },
+    documents,
+    certifications: version.certifications.map((row) => ({ id: row.id, party: row.party, nameSnapshot: row.nameSnapshot, designationSnapshot: row.designationSnapshot, certificationDate: dateValue(row.certificationDate), digitallyConfirmed: row.digitallyConfirmed, confirmedAt: dateValue(row.confirmedAt), confirmedBy: row.confirmedBy ? [row.confirmedBy.firstName, row.confirmedBy.lastName].filter(Boolean).join(" ") || row.confirmedBy.email || "Internal user" : null })),
+    requirements: { auditedFinancialStatementsRequired: version.reportType === "FINAL", sectorUnavailable: true, approvedBudgetSourceUnavailable: true },
   };
 }

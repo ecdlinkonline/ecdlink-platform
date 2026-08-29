@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Prisma } from "@prisma/client";
-import { createGrantAward, createGrantReportingObligation, GrantReportingServiceError, type GrantReportingTransactionRunner } from "./grant-reports";
-import { createGrantAwardSchema, createGrantReportingObligationSchema } from "@/lib/validators/grant-reports";
+import { createGrantAward, createGrantReportingObligation, GrantReportingServiceError, saveGrantReportSection, type GrantReportingTransactionRunner } from "./grant-reports";
+import { createGrantAwardSchema, createGrantReportingObligationSchema, saveGrantReportSectionSchema } from "@/lib/validators/grant-reports";
 
 function runner(transaction: object): GrantReportingTransactionRunner {
   return async <T>(operation: (tx: Prisma.TransactionClient) => Promise<T>) => operation(transaction as Prisma.TransactionClient);
@@ -101,4 +101,51 @@ test("obligation creation eagerly creates Draft report version 1 and audits the 
   assert.equal(captured.report?.status, "DRAFT");
   assert.equal(captured.report?.currentVersionNumber, 1);
   assert.equal(captured.audit?.actorUserId, "internal-user-1");
+});
+
+function reportSectionTransaction(versionStatus = "DRAFT", reportStatus = "DRAFT") {
+  const captured: { sustainabilityRows?: unknown; certifications?: Array<Record<string, unknown>>; audit?: Record<string, unknown>; deleted?: boolean } = {};
+  const report = { id: "report-1", status: reportStatus, currentVersionNumber: 1, award: { id: "award-1", awardNumber: "AW-1", title: "Award", awardedAmount: 1000, currency: "ZAR", centre: { id: "centre-1", centreName: "Centre", physicalAddress: null, suburb: null, area: null, province: null, postalCode: null, contactPerson: null, phone: null, email: null }, fundingProject: { id: "project-1", title: "Project", objective: null, expectedOutcomes: [], requiredItems: [] }, organisations: [] }, obligation: { tranche: null } };
+  const version = { id: "version-1", versionNumber: 1, status: versionStatus, reportType: "FINAL", centreSnapshot: null, projectSnapshot: null, awardSnapshot: null, fundingOrganisationSnapshot: null, trancheSnapshot: null };
+  const transaction = {
+    grantReport: { findUnique: async () => report },
+    grantReportVersion: { findUnique: async () => version, update: async () => ({}) },
+    grantReportSustainabilityItem: { deleteMany: async () => { captured.deleted = true; }, createMany: async ({ data }: { data: unknown }) => { captured.sustainabilityRows = data; } },
+    grantReportCertification: { deleteMany: async () => { captured.deleted = true; }, createMany: async ({ data }: { data: Array<Record<string, unknown>> }) => { captured.certifications = data; } },
+    auditLog: { create: async ({ data }: { data: Record<string, unknown> }) => { captured.audit = data; } },
+  };
+  return { transaction, captured };
+}
+
+test("submitted report versions are immutable", async () => {
+  const { transaction, captured } = reportSectionTransaction("SUBMITTED", "SUBMITTED");
+  const input = saveGrantReportSectionSchema.parse({ section: "sustainability", data: { challenges: "Challenge", organisationalChanges: null, communityChanges: null, rows: [] } });
+  await assert.rejects(() => saveGrantReportSection("report-1", input, "internal-user-1", runner(transaction), async () => null), (error: unknown) => error instanceof GrantReportingServiceError && error.status === 409);
+  assert.equal(captured.deleted, undefined);
+});
+
+test("sustainability rows persist transactionally and audit the internal actor", async () => {
+  const { transaction, captured } = reportSectionTransaction();
+  const input = saveGrantReportSectionSchema.parse({ section: "sustainability", data: { challenges: "Challenge", organisationalChanges: "New staff", communityChanges: "Improved access", rows: [{ plan: "Diversify funding", progressToDate: "Two applications submitted" }] } });
+  await saveGrantReportSection("report-1", input, "internal-user-1", runner(transaction), async () => ({ ok: true } as never));
+  assert.deepEqual(captured.sustainabilityRows, [{ grantReportVersionId: "version-1", plan: "Diversify funding", progressToDate: "Two applications submitted", displayOrder: 0 }]);
+  assert.equal(captured.audit?.actorUserId, "internal-user-1");
+  assert.equal(captured.audit?.action, "grant.report.section.saved");
+});
+
+test("digital certification stores the authenticated internal confirmer and timestamp", async () => {
+  const { transaction, captured } = reportSectionTransaction();
+  const input = saveGrantReportSectionSchema.parse({ section: "certification", data: { rows: [{ party: "COMPILER", nameSnapshot: "External Compiler", designationSnapshot: "Consultant", certificationDate: "2026-08-29", digitallyConfirmed: true }, { party: "APPROVER", nameSnapshot: "Board Chair", designationSnapshot: "Chairperson", certificationDate: "2026-08-29", digitallyConfirmed: false }] } });
+  await saveGrantReportSection("report-1", input, "internal-user-1", runner(transaction), async () => ({ ok: true } as never));
+  assert.equal(captured.certifications?.[0].confirmedByUserId, "internal-user-1");
+  assert.ok(captured.certifications?.[0].confirmedAt instanceof Date);
+  assert.equal(captured.certifications?.[1].confirmedByUserId, null);
+  assert.equal(captured.certifications?.[1].confirmedAt, null);
+});
+
+test("an indicator with linked evidence cannot be removed from a Draft", async () => {
+  const { transaction } = reportSectionTransaction();
+  Object.assign(transaction, { grantReportIndicator: { findMany: async () => [{ id: "indicator-1", _count: { documents: 1 } }], deleteMany: async () => { throw new Error("must not delete"); } } });
+  const input = saveGrantReportSectionSchema.parse({ section: "objectives", data: { rows: [] } });
+  await assert.rejects(() => saveGrantReportSection("report-1", input, "internal-user-1", runner(transaction), async () => null), (error: unknown) => error instanceof GrantReportingServiceError && error.status === 409);
 });

@@ -1,4 +1,5 @@
 export type GrantReportWorkspaceData = Awaited<ReturnType<typeof import("@/lib/repositories/grant-reports").getGrantReportWorkspace>>;
+export type GrantReportEditorData = NonNullable<Awaited<ReturnType<typeof import("@/lib/repositories/grant-reports").getGrantReportEditor>>>;
 
 export const reportTypeLabels = {
   INTERIM: "Interim",

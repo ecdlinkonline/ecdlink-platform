@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { grantReportBeneficiaryCategories, grantReportCertificationParties, grantReportRacialGroups } from "@/lib/grant-reports/editor";
 
 const optionalId = z.string().trim().min(1).optional().or(z.literal("").transform(() => undefined));
 const optionalDate = z.preprocess(
@@ -74,6 +75,132 @@ export const createGrantReportingObligationSchema = z.object({
   if (!["QUARTER", "PERIOD", "FINAL"].includes(input.basis) && (input.reportingPeriodStart || input.reportingPeriodEnd)) context.addIssue({ code: "custom", path: ["reportingPeriodStart"], message: "Reporting period dates are not valid for this obligation basis." });
 });
 
+const reportRowId = z.string().trim().min(1).optional();
+const narrative = z.string().trim().max(20_000).nullable().optional();
+const nonNegativeCount = z.coerce.number().int().min(0).max(10_000_000);
+const money = z.string().trim().regex(/^\d{1,12}(?:\.\d{1,2})?$/, "Enter a non-negative amount with no more than two decimal places.");
+
+export const saveGrantReportGeneralSchema = z.object({
+  section: z.literal("general"),
+  data: z.object({
+    reportingPeriodStart: z.string().date().nullable(),
+    reportingPeriodEnd: z.string().date().nullable(),
+    previousTrancheBalance: money.nullable(),
+  }).superRefine((input, context) => {
+    if (input.reportingPeriodStart && input.reportingPeriodEnd && input.reportingPeriodEnd < input.reportingPeriodStart) {
+      context.addIssue({ code: "custom", path: ["reportingPeriodEnd"], message: "Reporting period end must be on or after its start." });
+    }
+  }),
+});
+
+export const saveGrantReportIndicatorsSchema = z.object({
+  section: z.literal("objectives"),
+  data: z.object({
+    rows: z.array(z.object({
+      id: reportRowId,
+      objective: z.string().trim().min(1).max(2_000),
+      deliverable: z.string().trim().max(2_000).nullable().optional(),
+      achieved: z.string().trim().max(5_000).nullable().optional(),
+      status: z.enum(["NOT_STARTED", "ON_TRACK", "AT_RISK", "DELAYED", "COMPLETED", "NOT_APPLICABLE"]),
+      meansOfVerification: z.string().trim().max(5_000).nullable().optional(),
+    })).max(100),
+  }),
+});
+
+export const saveGrantReportBeneficiariesSchema = z.object({
+  section: z.literal("beneficiaries"),
+  data: z.object({
+    beneficiaries: z.array(z.object({
+      category: z.enum(grantReportBeneficiaryCategories),
+      total: nonNegativeCount,
+      male: nonNegativeCount,
+      female: nonNegativeCount,
+    })).length(grantReportBeneficiaryCategories.length),
+    racialRows: z.array(z.object({
+      racialGroup: z.enum(grantReportRacialGroups),
+      children: nonNegativeCount,
+      youth: nonNegativeCount,
+      men: nonNegativeCount,
+      women: nonNegativeCount,
+      olderPersons: nonNegativeCount,
+      peopleWithDisabilities: nonNegativeCount,
+    })).length(grantReportRacialGroups.length),
+  }).superRefine((input, context) => {
+    if (new Set(input.beneficiaries.map((row) => row.category)).size !== grantReportBeneficiaryCategories.length) {
+      context.addIssue({ code: "custom", path: ["beneficiaries"], message: "Each beneficiary category must appear exactly once." });
+    }
+    input.beneficiaries.forEach((row, index) => {
+      if (row.total !== row.male + row.female) context.addIssue({ code: "custom", path: ["beneficiaries", index, "total"], message: "Total must equal the male and female counts." });
+    });
+    if (new Set(input.racialRows.map((row) => row.racialGroup)).size !== grantReportRacialGroups.length) {
+      context.addIssue({ code: "custom", path: ["racialRows"], message: "Each racial-profile group must appear exactly once." });
+    }
+  }),
+});
+
+export const saveGrantReportSustainabilitySchema = z.object({
+  section: z.literal("sustainability"),
+  data: z.object({
+    challenges: narrative,
+    organisationalChanges: narrative,
+    communityChanges: narrative,
+    rows: z.array(z.object({ id: reportRowId, plan: z.string().trim().min(1).max(10_000), progressToDate: z.string().trim().min(1).max(10_000) })).max(100),
+  }),
+});
+
+export const saveGrantReportFinancialSchema = z.object({
+  section: z.literal("financial"),
+  data: z.object({
+    fundingReceivedTotal: money,
+    previousTrancheBalance: money.nullable(),
+    quarterlyExpenditureTotal: money,
+    rows: z.array(z.object({
+      id: reportRowId,
+      categoryName: z.string().trim().min(1).max(500),
+      description: z.string().trim().max(2_000).nullable().optional(),
+      approvedBudget: money.nullable(),
+      quarterlyActual: money.nullable(),
+    })).max(250),
+  }),
+});
+
+export const saveGrantReportCertificationsSchema = z.object({
+  section: z.literal("certification"),
+  data: z.object({
+    rows: z.array(z.object({
+      party: z.enum(grantReportCertificationParties),
+      nameSnapshot: z.string().trim().min(1).max(200),
+      designationSnapshot: z.string().trim().min(1).max(200),
+      certificationDate: z.string().date().nullable(),
+      digitallyConfirmed: z.boolean(),
+    }).superRefine((row, context) => {
+      if (row.digitallyConfirmed && !row.certificationDate) context.addIssue({ code: "custom", path: ["certificationDate"], message: "A certification date is required for digital confirmation." });
+    })).length(grantReportCertificationParties.length),
+  }).superRefine((input, context) => {
+    if (new Set(input.rows.map((row) => row.party)).size !== grantReportCertificationParties.length) {
+      context.addIssue({ code: "custom", path: ["rows"], message: "Compiler and approver certification records are both required." });
+    }
+  }),
+});
+
+export const saveGrantReportSectionSchema = z.discriminatedUnion("section", [
+  saveGrantReportGeneralSchema,
+  saveGrantReportIndicatorsSchema,
+  saveGrantReportBeneficiariesSchema,
+  saveGrantReportSustainabilitySchema,
+  saveGrantReportFinancialSchema,
+  saveGrantReportCertificationsSchema,
+]);
+
+export const uploadGrantReportDocumentSchema = z.object({
+  documentType: z.enum(["INVOICE", "BANK_STATEMENT", "PROOF_OF_PAYMENT", "RECEIPT", "PROCUREMENT_EVIDENCE", "INDICATOR_EVIDENCE", "BENEFICIARY_EVIDENCE", "SIGNED_REPORT", "AUDITED_FINANCIAL_STATEMENTS", "OTHER"]),
+  title: z.string().trim().min(1).max(200),
+  description: z.string().trim().max(2_000).optional(),
+  indicatorId: optionalId,
+});
+
 export type CreateGrantAwardInput = z.infer<typeof createGrantAwardSchema>;
 export type CreateGrantReportingObligationInput = z.infer<typeof createGrantReportingObligationSchema>;
 export type GrantReportFiltersInput = z.infer<typeof grantReportFiltersSchema>;
+export type SaveGrantReportSectionInput = z.infer<typeof saveGrantReportSectionSchema>;
+export type UploadGrantReportDocumentInput = z.infer<typeof uploadGrantReportDocumentSchema>;
