@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { grantReportBeneficiaryCategories, grantReportCertificationParties, grantReportRacialGroups } from "@/lib/grant-reports/editor";
+import { addGrantAmounts, grantReportBeneficiaryCategories, grantReportCertificationParties, grantReportRacialGroups, quarterlyExpenditureTotals, subtractGrantAmounts, sumGrantAmounts } from "@/lib/grant-reports/editor";
 
 const optionalId = z.string().trim().min(1).optional().or(z.literal("").transform(() => undefined));
 const optionalDate = z.preprocess(
@@ -164,6 +164,92 @@ export const saveGrantReportFinancialSchema = z.object({
   }),
 });
 
+export const saveQuarterlyExpenditureGeneralSchema = z.object({
+  section: z.literal("quarterly_general"),
+  data: z.object({
+    financialYear: z.string().trim().min(1).max(20),
+    quarter: z.coerce.number().int().min(1).max(4),
+    reportingPeriodStart: z.string().date(),
+    reportingPeriodEnd: z.string().date(),
+  }).superRefine((input, context) => {
+    if (input.reportingPeriodEnd < input.reportingPeriodStart) context.addIssue({ code: "custom", path: ["reportingPeriodEnd"], message: "Reporting period end must be on or after its start." });
+  }),
+});
+
+const quarterlyIncomeRow = z.object({
+  id: reportRowId,
+  lineType: z.enum(["FUNDING_RECEIVED", "OTHER_INCOME"]),
+  categoryName: z.string().trim().min(1).max(500),
+  amount: money.nullable(),
+});
+
+export const saveQuarterlyIncomeSchema = z.object({
+  section: z.literal("quarterly_income"),
+  data: z.object({
+    rows: z.array(quarterlyIncomeRow).max(100),
+    totalIncome: money,
+  }).superRefine((input, context) => {
+    const expected = sumGrantAmounts(input.rows.map((row) => row.amount));
+    const supplied = sumGrantAmounts([input.totalIncome]);
+    if (expected === null || expected !== supplied) context.addIssue({ code: "custom", path: ["totalIncome"], message: "Total income must equal the sum of the income lines." });
+  }),
+});
+
+const quarterlyExpenditureRow = z.object({
+  id: reportRowId,
+  categoryName: z.string().trim().min(1).max(500),
+  costingFrameworkPercentage: money.nullable(),
+  quarterlyBudget: money.nullable(),
+  fundingSourceActual: money.nullable(),
+  otherSourceActual: money.nullable(),
+  quarterlyActual: money,
+}).superRefine((row, context) => {
+  if (row.costingFrameworkPercentage && Number(row.costingFrameworkPercentage) > 100) context.addIssue({ code: "custom", path: ["costingFrameworkPercentage"], message: "Costing Framework percentage must be between 0 and 100." });
+  const expected = addGrantAmounts(row.fundingSourceActual, row.otherSourceActual);
+  const supplied = sumGrantAmounts([row.quarterlyActual]);
+  if (expected === null || expected !== supplied) context.addIssue({ code: "custom", path: ["quarterlyActual"], message: "Total expenditure must equal funding-source plus other-source expenditure." });
+});
+
+export const saveQuarterlyExpenditureSchema = z.object({
+  section: z.literal("quarterly_expenditure"),
+  data: z.object({
+    rows: z.array(quarterlyExpenditureRow).max(250),
+    totalAllocatedBudget: money,
+    totalFundingSourceExpenditure: money,
+    totalOtherSourceExpenditure: money,
+    totalExpenditure: money,
+    surplusDeficit: z.string().trim().regex(/^-?\d{1,12}(?:\.\d{1,2})?$/, "Enter a valid surplus or deficit with no more than two decimal places."),
+    totalIncome: money,
+  }).superRefine((input, context) => {
+    const totals = quarterlyExpenditureTotals(input.rows);
+    const comparisons = [
+      ["totalAllocatedBudget", totals.totalAllocatedBudget],
+      ["totalFundingSourceExpenditure", totals.totalFundingSourceExpenditure],
+      ["totalOtherSourceExpenditure", totals.totalOtherSourceExpenditure],
+      ["totalExpenditure", totals.totalExpenditure],
+    ] as const;
+    for (const [field, expected] of comparisons) {
+      if (expected === null || expected !== sumGrantAmounts([input[field]])) context.addIssue({ code: "custom", path: [field], message: "The supplied total does not match the expenditure lines." });
+    }
+    const expectedSurplus = totals.totalExpenditure === null ? null : subtractGrantAmounts(input.totalIncome, totals.totalExpenditure);
+    if (expectedSurplus === null || expectedSurplus !== normalizeSignedMoney(input.surplusDeficit)) context.addIssue({ code: "custom", path: ["surplusDeficit"], message: "Surplus or deficit must equal total income minus total expenditure." });
+  }),
+});
+
+function normalizeSignedMoney(value: string) {
+  const negative = value.startsWith("-");
+  const normalized = sumGrantAmounts([negative ? value.slice(1) : value]);
+  return normalized === null ? null : negative && normalized !== "0.00" ? `-${normalized}` : normalized;
+}
+
+export const saveQuarterlyBankReconciliationSchema = z.object({
+  section: z.literal("bank_reconciliation"),
+  data: z.object({
+    openingBankBalance: money.nullable(),
+    closingBankBalance: money.nullable(),
+  }),
+});
+
 export const saveGrantReportCertificationsSchema = z.object({
   section: z.literal("certification"),
   data: z.object({
@@ -189,6 +275,10 @@ export const saveGrantReportSectionSchema = z.discriminatedUnion("section", [
   saveGrantReportBeneficiariesSchema,
   saveGrantReportSustainabilitySchema,
   saveGrantReportFinancialSchema,
+  saveQuarterlyExpenditureGeneralSchema,
+  saveQuarterlyIncomeSchema,
+  saveQuarterlyExpenditureSchema,
+  saveQuarterlyBankReconciliationSchema,
   saveGrantReportCertificationsSchema,
 ]);
 

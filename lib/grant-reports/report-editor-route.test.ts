@@ -46,6 +46,14 @@ test("valid section payload reaches persistence with the internal actor", async 
   assert.deepEqual(captured, { reportId: "report-1", input: validBody, actorUserId: "internal-admin" });
 });
 
+test("valid quarterly section payload uses the same authorized section-save boundary", async () => {
+  let captured: unknown;
+  const quarterlyBody = { section: "bank_reconciliation", data: { openingBankBalance: "100.10", closingBankBalance: "200.20" } };
+  const handler = createGrantReportSectionHandler(dependencies({ save: async (reportId, input, actorUserId) => { captured = { reportId, input, actorUserId }; return {}; } }));
+  assert.equal((await handler(request(quarterlyBody), context)).status, 200);
+  assert.deepEqual(captured, { reportId: "report-1", input: quarterlyBody, actorUserId: "internal-admin" });
+});
+
 test("invalid payload and invalid report access fail safely", async () => {
   const invalid = createGrantReportSectionHandler(dependencies());
   assert.equal((await invalid(request({ section: "beneficiaries", data: {} }), context)).status, 422);

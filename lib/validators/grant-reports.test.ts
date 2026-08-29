@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createGrantAwardSchema, createGrantReportingObligationSchema, saveGrantReportBeneficiariesSchema, saveGrantReportCertificationsSchema, saveGrantReportFinancialSchema } from "./grant-reports";
+import { createGrantAwardSchema, createGrantReportingObligationSchema, saveGrantReportBeneficiariesSchema, saveGrantReportCertificationsSchema, saveGrantReportFinancialSchema, saveQuarterlyBankReconciliationSchema, saveQuarterlyExpenditureGeneralSchema, saveQuarterlyExpenditureSchema, saveQuarterlyIncomeSchema } from "./grant-reports";
 
 const award = {
   sourceType: "MANUAL", centreId: "centre-1", fundingProjectId: "project-1", awardNumber: "AW-001", title: "Nutrition grant",
@@ -62,4 +62,26 @@ test("certification confirmation requires a date and financial amounts remain de
   assert.equal(saveGrantReportCertificationsSchema.safeParse({ section: "certification", data: { rows: rows.map((row, index) => index === 0 ? { ...row, certificationDate: null } : row) } }).success, false);
   assert.equal(saveGrantReportFinancialSchema.safeParse({ section: "financial", data: { fundingReceivedTotal: "1000.10", previousTrancheBalance: "0.00", quarterlyExpenditureTotal: "200.09", rows: [] } }).success, true);
   assert.equal(saveGrantReportFinancialSchema.safeParse({ section: "financial", data: { fundingReceivedTotal: 1000.1, previousTrancheBalance: null, quarterlyExpenditureTotal: "0.00", rows: [] } }).success, false);
+});
+
+test("quarterly general and bank sections validate required period data and decimal balances", () => {
+  assert.equal(saveQuarterlyExpenditureGeneralSchema.safeParse({ section: "quarterly_general", data: { financialYear: "2026", quarter: 1, reportingPeriodStart: "2026-01-01", reportingPeriodEnd: "2026-03-31" } }).success, true);
+  assert.equal(saveQuarterlyExpenditureGeneralSchema.safeParse({ section: "quarterly_general", data: { financialYear: "", quarter: 5, reportingPeriodStart: "2026-04-01", reportingPeriodEnd: "2026-03-31" } }).success, false);
+  assert.equal(saveQuarterlyBankReconciliationSchema.safeParse({ section: "bank_reconciliation", data: { openingBankBalance: "100.10", closingBankBalance: "200.20" } }).success, true);
+  assert.equal(saveQuarterlyBankReconciliationSchema.safeParse({ section: "bank_reconciliation", data: { openingBankBalance: "-1.00", closingBankBalance: null } }).success, false);
+});
+
+test("quarterly income requires a consistent total", () => {
+  const rows = [{ lineType: "FUNDING_RECEIVED", categoryName: "Department subsidy", amount: "1000.10" }, { lineType: "OTHER_INCOME", categoryName: "Other Income", amount: "20.05" }];
+  assert.equal(saveQuarterlyIncomeSchema.safeParse({ section: "quarterly_income", data: { rows, totalIncome: "1020.15" } }).success, true);
+  assert.equal(saveQuarterlyIncomeSchema.safeParse({ section: "quarterly_income", data: { rows, totalIncome: "1020.14" } }).success, false);
+});
+
+test("quarterly expenditure validates framework percentages, source splits, totals and surplus", () => {
+  const row = { categoryName: "Nutrition", costingFrameworkPercentage: "25.00", quarterlyBudget: "500.00", fundingSourceActual: "200.10", otherSourceActual: "50.05", quarterlyActual: "250.15" };
+  const valid = { section: "quarterly_expenditure", data: { rows: [row], totalAllocatedBudget: "500.00", totalFundingSourceExpenditure: "200.10", totalOtherSourceExpenditure: "50.05", totalExpenditure: "250.15", totalIncome: "1000.00", surplusDeficit: "749.85" } };
+  assert.equal(saveQuarterlyExpenditureSchema.safeParse(valid).success, true);
+  assert.equal(saveQuarterlyExpenditureSchema.safeParse({ ...valid, data: { ...valid.data, rows: [{ ...row, costingFrameworkPercentage: "100.01" }] } }).success, false);
+  assert.equal(saveQuarterlyExpenditureSchema.safeParse({ ...valid, data: { ...valid.data, rows: [{ ...row, quarterlyActual: "250.14" }] } }).success, false);
+  assert.equal(saveQuarterlyExpenditureSchema.safeParse({ ...valid, data: { ...valid.data, surplusDeficit: "749.84" } }).success, false);
 });

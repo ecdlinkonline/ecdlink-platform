@@ -1,4 +1,4 @@
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { getGrantReportEditor, withGrantReportingTransaction } from "@/lib/repositories/grant-reports";
 import type { CreateGrantAwardInput, CreateGrantReportingObligationInput, SaveGrantReportSectionInput } from "@/lib/validators/grant-reports";
 import { GRANT_AWARD_STAGING_ENTITY } from "@/lib/services/grant-award-agreements";
@@ -132,7 +132,7 @@ export async function requireMutableGrantReport(tx: Prisma.TransactionClient, re
           title: true,
           awardedAmount: true,
           currency: true,
-          centre: { select: { id: true, centreName: true, physicalAddress: true, suburb: true, area: true, province: true, postalCode: true, contactPerson: true, phone: true, email: true } },
+          centre: { select: { id: true, centreName: true, npoNumber: true, physicalAddress: true, suburb: true, area: true, province: true, postalCode: true, contactPerson: true, phone: true, email: true } },
           fundingProject: { select: { id: true, title: true, objective: true, expectedOutcomes: true, requiredItems: true } },
           organisations: { where: { removedAt: null }, orderBy: [{ isPrimary: "desc" as const }, { addedAt: "asc" as const }], include: { fundingOrganisation: { select: { id: true, name: true } }, donorOrganisation: { select: { id: true, name: true, organisationName: true } } } },
         },
@@ -146,8 +146,8 @@ export async function requireMutableGrantReport(tx: Prisma.TransactionClient, re
   if (version.status !== "DRAFT" || ["SUBMITTED", "APPROVED", "ARCHIVED"].includes(report.status)) {
     throw new GrantReportingServiceError("This report version is immutable and cannot be edited.", 409);
   }
-  if (version.reportType !== "INTERIM" && version.reportType !== "FINAL") {
-    throw new GrantReportingServiceError("This report template is not available in the current phase.", 422);
+  if (!["INTERIM", "FINAL", "QUARTERLY_EXPENDITURE"].includes(version.reportType)) {
+    throw new GrantReportingServiceError("This report template is not available for editing.", 422);
   }
   return { report, version };
 }
@@ -161,7 +161,31 @@ export async function saveGrantReportSection(
 ) {
   await runTransaction(async (tx) => {
     const { report, version } = await requireMutableGrantReport(tx, reportId);
-    if (input.section === "general") {
+    const nlcSections = ["general", "objectives", "beneficiaries", "sustainability", "financial", "certification"];
+    const quarterlySections = ["quarterly_general", "quarterly_income", "quarterly_expenditure", "bank_reconciliation", "certification"];
+    const allowedSections = version.reportType === "QUARTERLY_EXPENDITURE" ? quarterlySections : nlcSections;
+    if (!allowedSections.includes(input.section)) throw new GrantReportingServiceError("This section does not belong to the selected report type.", 422);
+
+    if (input.section === "quarterly_general") {
+      const centre = report.award.centre;
+      const project = report.award.fundingProject;
+      const lead = report.award.organisations[0];
+      const leadName = lead?.fundingOrganisation?.name ?? lead?.donorOrganisation?.organisationName ?? lead?.donorOrganisation?.name ?? null;
+      const physicalAddress = [centre.physicalAddress, centre.suburb, centre.area, centre.province, centre.postalCode].filter(Boolean).join(", ") || null;
+      await tx.grantReportVersion.update({
+        where: { id: version.id },
+        data: {
+          financialYear: input.data.financialYear,
+          quarter: input.data.quarter,
+          reportingPeriodStart: new Date(`${input.data.reportingPeriodStart}T00:00:00.000Z`),
+          reportingPeriodEnd: new Date(`${input.data.reportingPeriodEnd}T00:00:00.000Z`),
+          centreSnapshot: version.centreSnapshot ?? json({ id: centre.id, centreName: centre.centreName, npoNumber: centre.npoNumber, physicalAddress, contactPerson: centre.contactPerson, phone: centre.phone, email: centre.email }),
+          projectSnapshot: version.projectSnapshot ?? json({ id: project.id, title: project.title, objective: project.objective, expectedOutcomes: project.expectedOutcomes, requiredItems: project.requiredItems }),
+          awardSnapshot: version.awardSnapshot ?? json({ id: report.award.id, awardNumber: report.award.awardNumber, title: report.award.title, awardedAmount: report.award.awardedAmount, currency: report.award.currency }),
+          fundingOrganisationSnapshot: version.fundingOrganisationSnapshot ?? json({ name: leadName, organisationType: lead?.organisationType ?? null, fundingOrganisationId: lead?.fundingOrganisationId ?? null, donorOrganisationId: lead?.donorOrganisationId ?? null }),
+        },
+      });
+    } else if (input.section === "general") {
       const centre = report.award.centre;
       const project = report.award.fundingProject;
       const lead = report.award.organisations[0];
@@ -173,7 +197,7 @@ export async function saveGrantReportSection(
           reportingPeriodStart: input.data.reportingPeriodStart ? new Date(`${input.data.reportingPeriodStart}T00:00:00.000Z`) : null,
           reportingPeriodEnd: input.data.reportingPeriodEnd ? new Date(`${input.data.reportingPeriodEnd}T00:00:00.000Z`) : null,
           previousTrancheBalance: input.data.previousTrancheBalance,
-          centreSnapshot: version.centreSnapshot ?? json({ id: centre.id, centreName: centre.centreName, physicalAddress, contactPerson: centre.contactPerson, phone: centre.phone, email: centre.email }),
+          centreSnapshot: version.centreSnapshot ?? json({ id: centre.id, centreName: centre.centreName, npoNumber: centre.npoNumber, physicalAddress, contactPerson: centre.contactPerson, phone: centre.phone, email: centre.email }),
           projectSnapshot: version.projectSnapshot ?? json({ id: project.id, title: project.title, objective: project.objective, expectedOutcomes: project.expectedOutcomes, requiredItems: project.requiredItems }),
           awardSnapshot: version.awardSnapshot ?? json({ id: report.award.id, awardNumber: report.award.awardNumber, title: report.award.title, awardedAmount: report.award.awardedAmount, currency: report.award.currency }),
           fundingOrganisationSnapshot: version.fundingOrganisationSnapshot ?? json({ name: leadName, organisationType: lead?.organisationType ?? null, fundingOrganisationId: lead?.fundingOrganisationId ?? null, donorOrganisationId: lead?.donorOrganisationId ?? null }),
@@ -214,6 +238,39 @@ export async function saveGrantReportSection(
         if (row.id) await tx.grantReportFinancialLine.update({ where: { id: row.id }, data });
         else await tx.grantReportFinancialLine.create({ data: { ...data, grantReportVersionId: version.id } });
       }
+    } else if (input.section === "quarterly_income") {
+      const existing = await tx.grantReportFinancialLine.findMany({ where: { grantReportVersionId: version.id, lineType: { in: ["FUNDING_RECEIVED", "OTHER_INCOME"] } }, select: { id: true, _count: { select: { documents: true, expenseEntries: true } } } });
+      const requestedIds = input.data.rows.flatMap((row) => row.id ? [row.id] : []);
+      if (new Set(requestedIds).size !== requestedIds.length || requestedIds.some((id) => !existing.some((row) => row.id === id))) throw new GrantReportingServiceError("One or more income rows do not belong to this report version.", 422);
+      const removed = existing.filter((row) => !requestedIds.includes(row.id));
+      if (removed.some((row) => row._count.documents > 0 || row._count.expenseEntries > 0)) throw new GrantReportingServiceError("An income row with linked evidence or expense entries cannot be removed.", 409);
+      if (removed.length) await tx.grantReportFinancialLine.deleteMany({ where: { id: { in: removed.map((row) => row.id) }, grantReportVersionId: version.id } });
+      for (const [displayOrder, row] of input.data.rows.entries()) {
+        const data = { lineType: row.lineType, categoryName: row.categoryName, quarterlyActual: row.amount, displayOrder };
+        if (row.id) await tx.grantReportFinancialLine.update({ where: { id: row.id }, data });
+        else await tx.grantReportFinancialLine.create({ data: { ...data, grantReportVersionId: version.id } });
+      }
+      const fundingReceivedTotal = input.data.rows.filter((row) => row.lineType === "FUNDING_RECEIVED").reduce((total, row) => total.plus(row.amount ?? 0), new Prisma.Decimal(0));
+      const otherIncomeTotal = input.data.rows.filter((row) => row.lineType === "OTHER_INCOME").reduce((total, row) => total.plus(row.amount ?? 0), new Prisma.Decimal(0));
+      const totalIncome = fundingReceivedTotal.plus(otherIncomeTotal);
+      await tx.grantReportVersion.update({ where: { id: version.id }, data: { fundingReceivedTotal, otherIncomeTotal, totalIncome, surplusDeficit: totalIncome.minus(version.totalExpenditure) } });
+    } else if (input.section === "quarterly_expenditure") {
+      const existing = await tx.grantReportFinancialLine.findMany({ where: { grantReportVersionId: version.id, lineType: "EXPENDITURE" }, select: { id: true, _count: { select: { documents: true, expenseEntries: true } } } });
+      const requestedIds = input.data.rows.flatMap((row) => row.id ? [row.id] : []);
+      if (new Set(requestedIds).size !== requestedIds.length || requestedIds.some((id) => !existing.some((row) => row.id === id))) throw new GrantReportingServiceError("One or more expenditure rows do not belong to this report version.", 422);
+      const removed = existing.filter((row) => !requestedIds.includes(row.id));
+      if (removed.some((row) => row._count.documents > 0 || row._count.expenseEntries > 0)) throw new GrantReportingServiceError("An expenditure row with linked evidence or expense entries cannot be removed.", 409);
+      if (removed.length) await tx.grantReportFinancialLine.deleteMany({ where: { id: { in: removed.map((row) => row.id) }, grantReportVersionId: version.id } });
+      for (const [displayOrder, row] of input.data.rows.entries()) {
+        const quarterlyActual = new Prisma.Decimal(row.fundingSourceActual ?? 0).plus(row.otherSourceActual ?? 0);
+        const data = { lineType: "EXPENDITURE" as const, categoryName: row.categoryName, costingFrameworkPercentage: row.costingFrameworkPercentage, quarterlyBudget: row.quarterlyBudget, fundingSourceActual: row.fundingSourceActual, otherSourceActual: row.otherSourceActual, quarterlyActual, displayOrder };
+        if (row.id) await tx.grantReportFinancialLine.update({ where: { id: row.id }, data });
+        else await tx.grantReportFinancialLine.create({ data: { ...data, grantReportVersionId: version.id } });
+      }
+      const totalExpenditure = input.data.rows.reduce((total, row) => total.plus(row.fundingSourceActual ?? 0).plus(row.otherSourceActual ?? 0), new Prisma.Decimal(0));
+      await tx.grantReportVersion.update({ where: { id: version.id }, data: { quarterlyExpenditureTotal: totalExpenditure, totalExpenditure, surplusDeficit: version.totalIncome.minus(totalExpenditure) } });
+    } else if (input.section === "bank_reconciliation") {
+      await tx.grantReportVersion.update({ where: { id: version.id }, data: { openingBankBalance: input.data.openingBankBalance, closingBankBalance: input.data.closingBankBalance } });
     } else if (input.section === "certification") {
       const confirmedAt = new Date();
       await tx.grantReportCertification.deleteMany({ where: { grantReportVersionId: version.id } });

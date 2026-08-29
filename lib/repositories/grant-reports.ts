@@ -2,7 +2,7 @@ import "server-only";
 
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
-import { buildSuggestedGrantIndicators, grantReportCompletion, resolveGrantReportTemplate } from "@/lib/grant-reports/editor";
+import { buildSuggestedGrantIndicators, dbeQuarterlyExpenditureCategories, grantReportCompletion, quarterlyExpenditureCompletion, resolveGrantReportTemplate } from "@/lib/grant-reports/editor";
 import type { GrantReportFiltersInput } from "@/lib/validators/grant-reports";
 
 export function withGrantReportingTransaction<T>(operation: (tx: Prisma.TransactionClient) => Promise<T>) {
@@ -239,7 +239,7 @@ export async function getGrantReportEditor(reportId: string) {
       id: true,
       status: true,
       currentVersionNumber: true,
-      obligation: { select: { id: true, title: true, type: true, dueAt: true, reportingPeriodStart: true, reportingPeriodEnd: true, tranche: { select: { id: true, trancheNumber: true, scheduledAmount: true } } } },
+      obligation: { select: { id: true, title: true, type: true, dueAt: true, reportingPeriodStart: true, reportingPeriodEnd: true, financialYear: true, quarter: true, tranche: { select: { id: true, trancheNumber: true, scheduledAmount: true } } } },
       award: {
         select: {
           id: true,
@@ -247,7 +247,7 @@ export async function getGrantReportEditor(reportId: string) {
           title: true,
           awardedAmount: true,
           currency: true,
-          centre: { select: { id: true, centreName: true, physicalAddress: true, suburb: true, area: true, province: true, postalCode: true, contactPerson: true, phone: true, email: true } },
+          centre: { select: { id: true, centreName: true, npoNumber: true, physicalAddress: true, suburb: true, area: true, province: true, postalCode: true, contactPerson: true, phone: true, email: true } },
           fundingProject: { select: { id: true, title: true, objective: true, expectedOutcomes: true, requiredItems: true } },
           organisations: partyInclude,
         },
@@ -279,6 +279,7 @@ export async function getGrantReportEditor(reportId: string) {
     canSuggestPeriodTotals ? prisma.grantDisbursement.aggregate({ where: { grantAwardId: report.award.id, receivedAt: dateFilter }, _sum: { amountReceived: true } }) : Promise.resolve({ _sum: { amountReceived: null } }),
     canSuggestPeriodTotals ? prisma.grantExpenseAllocation.aggregate({ where: { grantAwardId: report.award.id, reversedAt: null, allocationDate: dateFilter }, _sum: { allocatedAmount: true } }) : Promise.resolve({ _sum: { allocatedAmount: null } }),
   ]);
+  const suggestedFundingReceived = canSuggestPeriodTotals ? decimalString(received._sum.amountReceived) : null;
 
   const centreSnapshot = recordValue(version.centreSnapshot);
   const awardSnapshot = recordValue(version.awardSnapshot);
@@ -289,6 +290,8 @@ export async function getGrantReportEditor(reportId: string) {
   const currentParty = partyName(report.award.organisations);
 
   const suggestedIndicators = buildSuggestedGrantIndicators(report.award.fundingProject, version.indicators.length);
+  const incomeLines = version.financialLines.filter((row) => row.lineType === "FUNDING_RECEIVED" || row.lineType === "OTHER_INCOME");
+  const expenditureLines = version.financialLines.filter((row) => row.lineType === "EXPENDITURE");
 
   const documents = version.documents.map((document) => ({
     id: document.id,
@@ -303,7 +306,18 @@ export async function getGrantReportEditor(reportId: string) {
     uploadedAt: document.uploadedAt.toISOString(),
     uploadedBy: [document.uploadedBy.firstName, document.uploadedBy.lastName].filter(Boolean).join(" ") || document.uploadedBy.email || "Internal user",
   }));
-  const completion = grantReportCompletion({
+  const completion = version.reportType === "QUARTERLY_EXPENDITURE" ? quarterlyExpenditureCompletion({
+    financialYear: version.financialYear,
+    quarter: version.quarter,
+    reportingPeriodStart: dateValue(version.reportingPeriodStart),
+    reportingPeriodEnd: dateValue(version.reportingPeriodEnd),
+    incomeLineCount: incomeLines.length,
+    expenditureLineCount: expenditureLines.length,
+    openingBankBalance: decimalString(version.openingBankBalance),
+    closingBankBalance: decimalString(version.closingBankBalance),
+    certificationCount: version.certifications.length,
+    confirmedCertificationCount: version.certifications.filter((item) => item.digitallyConfirmed).length,
+  }) : grantReportCompletion({
     reportType: version.reportType,
     reportingPeriodStart: dateValue(version.reportingPeriodStart),
     reportingPeriodEnd: dateValue(version.reportingPeriodEnd),
@@ -328,12 +342,15 @@ export async function getGrantReportEditor(reportId: string) {
       sector: null,
       centreName: snapshotString(centreSnapshot, "centreName") ?? (useCurrentFallback ? report.award.centre.centreName : null),
       physicalAddress: snapshotString(centreSnapshot, "physicalAddress") ?? (useCurrentFallback ? addressParts.join(", ") || null : null),
+      npoNumber: snapshotString(centreSnapshot, "npoNumber") ?? (useCurrentFallback ? report.award.centre.npoNumber : null),
       contactPerson: snapshotString(centreSnapshot, "contactPerson") ?? (useCurrentFallback ? report.award.centre.contactPerson : null),
       telephone: snapshotString(centreSnapshot, "phone") ?? (useCurrentFallback ? report.award.centre.phone : null),
       email: snapshotString(centreSnapshot, "email") ?? (useCurrentFallback ? report.award.centre.email : null),
       leadOrganisation: snapshotString(organisationSnapshot, "name") ?? (useCurrentFallback ? currentParty : null),
-      reportingPeriodStart: dateValue(version.reportingPeriodStart),
-      reportingPeriodEnd: dateValue(version.reportingPeriodEnd),
+      reportingPeriodStart: dateValue(version.reportingPeriodStart ?? (useCurrentFallback ? report.obligation.reportingPeriodStart : null)),
+      reportingPeriodEnd: dateValue(version.reportingPeriodEnd ?? (useCurrentFallback ? report.obligation.reportingPeriodEnd : null)),
+      financialYear: version.financialYear ?? (useCurrentFallback ? report.obligation.financialYear : null),
+      quarter: version.quarter ?? (useCurrentFallback ? report.obligation.quarter : null),
       trancheNumber: version.trancheNumberSnapshot ?? (useCurrentFallback ? report.obligation.tranche?.trancheNumber : null) ?? null,
       trancheAmount: decimalString(version.trancheAmountSnapshot ?? (useCurrentFallback ? report.obligation.tranche?.scheduledAmount : null)),
       previousTrancheBalance: decimalString(version.previousTrancheBalance),
@@ -350,7 +367,25 @@ export async function getGrantReportEditor(reportId: string) {
       quarterlyExpenditureTotal: version.quarterlyExpenditureTotal.toFixed(2),
       suggestedFundingReceivedTotal: canSuggestPeriodTotals ? (received._sum.amountReceived ?? new Prisma.Decimal(0)).toFixed(2) : null,
       suggestedQuarterlyExpenditureTotal: canSuggestPeriodTotals ? (spent._sum.allocatedAmount ?? new Prisma.Decimal(0)).toFixed(2) : null,
-      rows: version.financialLines.map((row) => ({ id: row.id, categoryName: row.categoryName, description: row.description, approvedBudget: decimalString(row.approvedBudget), quarterlyActual: decimalString(row.quarterlyActual) })),
+      rows: expenditureLines.map((row) => ({ id: row.id, categoryName: row.categoryName, description: row.description, approvedBudget: decimalString(row.approvedBudget), quarterlyActual: decimalString(row.quarterlyActual) })),
+    },
+    quarterlyExpenditure: {
+      incomeRows: incomeLines.length ? incomeLines.map((row) => ({ id: row.id, lineType: row.lineType as "FUNDING_RECEIVED" | "OTHER_INCOME", categoryName: row.categoryName, amount: decimalString(row.quarterlyActual) })) : [
+        { lineType: "FUNDING_RECEIVED" as const, categoryName: "Funding received from Department / subsidy", amount: suggestedFundingReceived },
+        { lineType: "OTHER_INCOME" as const, categoryName: "Other Income", amount: null },
+      ],
+      expenditureRows: expenditureLines.length ? expenditureLines.map((row) => ({ id: row.id, categoryName: row.categoryName, costingFrameworkPercentage: decimalString(row.costingFrameworkPercentage), quarterlyBudget: decimalString(row.quarterlyBudget), fundingSourceActual: decimalString(row.fundingSourceActual), otherSourceActual: decimalString(row.otherSourceActual), quarterlyActual: decimalString(row.quarterlyActual) ?? "0.00" })) : dbeQuarterlyExpenditureCategories.map((categoryName) => ({ categoryName, costingFrameworkPercentage: null, quarterlyBudget: null, fundingSourceActual: null, otherSourceActual: null, quarterlyActual: "0.00" })),
+      totals: {
+        fundingReceivedTotal: version.fundingReceivedTotal.toFixed(2),
+        otherIncomeTotal: version.otherIncomeTotal.toFixed(2),
+        totalIncome: version.totalIncome.toFixed(2),
+        quarterlyExpenditureTotal: version.quarterlyExpenditureTotal.toFixed(2),
+        totalExpenditure: version.totalExpenditure.toFixed(2),
+        surplusDeficit: version.surplusDeficit.toFixed(2),
+      },
+      openingBankBalance: decimalString(version.openingBankBalance),
+      closingBankBalance: decimalString(version.closingBankBalance),
+      suggestedFundingReceivedTotal: suggestedFundingReceived,
     },
     documents,
     certifications: version.certifications.map((row) => ({ id: row.id, party: row.party, nameSnapshot: row.nameSnapshot, designationSnapshot: row.designationSnapshot, certificationDate: dateValue(row.certificationDate), digitallyConfirmed: row.digitallyConfirmed, confirmedAt: dateValue(row.confirmedAt), confirmedBy: row.confirmedBy ? [row.confirmedBy.firstName, row.confirmedBy.lastName].filter(Boolean).join(" ") || row.confirmedBy.email || "Internal user" : null })),

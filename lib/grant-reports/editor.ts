@@ -10,6 +10,34 @@ export const nlcGrantReportSections = [
 
 export type NlcGrantReportSectionId = (typeof nlcGrantReportSections)[number]["id"];
 
+export const dbeQuarterlyExpenditureSections = [
+  { id: "quarterly_general", label: "General Information" },
+  { id: "quarterly_income", label: "Income" },
+  { id: "quarterly_expenditure", label: "Expenditure" },
+  { id: "bank_reconciliation", label: "Bank Reconciliation" },
+  { id: "certification", label: "Certification & Review" },
+] as const;
+
+export type DbeQuarterlyExpenditureSectionId = (typeof dbeQuarterlyExpenditureSections)[number]["id"];
+
+export const dbeQuarterlyExpenditureCategories = [
+  "Nutritional Requirements",
+  "Facility / Rent / Utilities",
+  "Administration / Governance",
+  "Bookkeeping / Audit",
+  "Transport",
+  "Educational / Learning Materials",
+  "Programme Stimulation",
+  "Practitioner / Staff Costs",
+  "Cook / Nutrition Support",
+  "Cleaning Materials",
+  "Gardening / Healthy Environment",
+  "Bank Charges",
+  "Office Expenses",
+  "Assets",
+  "Other Expenses",
+] as const;
+
 export const grantReportBeneficiaryCategories = [
   "CHILDREN_0_18",
   "YOUTH_18_35",
@@ -22,7 +50,9 @@ export const grantReportRacialGroups = ["AFRICAN", "COLOURED", "INDIAN_ASIAN", "
 export const grantReportCertificationParties = ["COMPILER", "APPROVER"] as const;
 
 export function resolveGrantReportTemplate(reportType: string) {
-  return reportType === "INTERIM" || reportType === "FINAL" ? "NLC" : "COMING_SOON";
+  if (reportType === "INTERIM" || reportType === "FINAL") return "NLC";
+  if (reportType === "QUARTERLY_EXPENDITURE") return "DBE_QUARTERLY_EXPENDITURE";
+  return "COMING_SOON";
 }
 
 export function isGrantReportVersionEditable(reportStatus: string, versionStatus: string) {
@@ -55,11 +85,67 @@ function centsToDecimal(value: number) {
   return `${sign}${Math.floor(absolute / 100)}.${String(absolute % 100).padStart(2, "0")}`;
 }
 
+export function sumGrantAmounts(values: Array<string | null | undefined>) {
+  let total = 0;
+  for (const value of values) {
+    if (value === null || value === undefined || value === "") continue;
+    const cents = decimalParts(value);
+    if (cents === null) return null;
+    total += cents;
+  }
+  return centsToDecimal(total);
+}
+
+export function addGrantAmounts(left: string | null | undefined, right: string | null | undefined) {
+  return sumGrantAmounts([left, right]);
+}
+
 export function subtractGrantAmounts(left: string, right: string) {
   const leftCents = decimalParts(left);
   const rightCents = decimalParts(right);
   if (leftCents === null || rightCents === null) return null;
   return centsToDecimal(leftCents - rightCents);
+}
+
+export function quarterlyExpenditureTotals(rows: Array<{
+  quarterlyBudget: string | null;
+  fundingSourceActual: string | null;
+  otherSourceActual: string | null;
+}>) {
+  const totalAllocatedBudget = sumGrantAmounts(rows.map((row) => row.quarterlyBudget));
+  const totalFundingSourceExpenditure = sumGrantAmounts(rows.map((row) => row.fundingSourceActual));
+  const totalOtherSourceExpenditure = sumGrantAmounts(rows.map((row) => row.otherSourceActual));
+  const totalExpenditure = addGrantAmounts(totalFundingSourceExpenditure, totalOtherSourceExpenditure);
+  return { totalAllocatedBudget, totalFundingSourceExpenditure, totalOtherSourceExpenditure, totalExpenditure };
+}
+
+export function quarterlyExpenditureCompletion(input: {
+  financialYear: string | null;
+  quarter: number | null;
+  reportingPeriodStart: string | null;
+  reportingPeriodEnd: string | null;
+  incomeLineCount: number;
+  expenditureLineCount: number;
+  openingBankBalance: string | null;
+  closingBankBalance: string | null;
+  certificationCount: number;
+  confirmedCertificationCount: number;
+}) {
+  const checks = [
+    Boolean(input.financialYear && input.quarter && input.reportingPeriodStart && input.reportingPeriodEnd),
+    input.incomeLineCount > 0,
+    input.expenditureLineCount > 0,
+    input.openingBankBalance !== null && input.closingBankBalance !== null,
+    input.certificationCount === grantReportCertificationParties.length && input.confirmedCertificationCount === grantReportCertificationParties.length,
+  ];
+  const complete = checks.filter(Boolean).length;
+  return {
+    percentage: Math.round((complete / checks.length) * 100),
+    structurallyComplete: complete === checks.length,
+    readyForSubmission: complete === checks.length,
+    completedChecks: complete,
+    totalChecks: checks.length,
+  };
 }
 
 export function calculateRacialRowTotal(row: {

@@ -1,11 +1,28 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildSuggestedGrantIndicators, calculateRacialColumnTotals, grantReportCompletion, isGrantReportVersionEditable, resolveGrantReportTemplate, subtractGrantAmounts } from "./editor";
+import { buildSuggestedGrantIndicators, calculateRacialColumnTotals, grantReportCompletion, isGrantReportVersionEditable, quarterlyExpenditureCompletion, quarterlyExpenditureTotals, resolveGrantReportTemplate, subtractGrantAmounts, sumGrantAmounts } from "./editor";
 
 test("Interim and Final resolve to the shared NLC template", () => {
   assert.equal(resolveGrantReportTemplate("INTERIM"), "NLC");
   assert.equal(resolveGrantReportTemplate("FINAL"), "NLC");
+  assert.equal(resolveGrantReportTemplate("QUARTERLY_EXPENDITURE"), "DBE_QUARTERLY_EXPENDITURE");
   assert.equal(resolveGrantReportTemplate("QUARTERLY_CASH_FLOW"), "COMING_SOON");
+});
+
+test("quarterly income and source-split expenditure calculations use integer cents", () => {
+  assert.equal(sumGrantAmounts(["1000.10", "200.09", null]), "1200.19");
+  const totals = quarterlyExpenditureTotals([
+    { quarterlyBudget: "1000.10", fundingSourceActual: "200.09", otherSourceActual: "50.01" },
+    { quarterlyBudget: "500.00", fundingSourceActual: "100.00", otherSourceActual: null },
+  ]);
+  assert.deepEqual(totals, { totalAllocatedBudget: "1500.10", totalFundingSourceExpenditure: "300.09", totalOtherSourceExpenditure: "50.01", totalExpenditure: "350.10" });
+  assert.equal(subtractGrantAmounts("1200.19", totals.totalExpenditure!), "850.09");
+});
+
+test("quarterly readiness requires general, income, expenditure, bank and certification sections", () => {
+  const complete = { financialYear: "2026", quarter: 1, reportingPeriodStart: "2026-01-01", reportingPeriodEnd: "2026-03-31", incomeLineCount: 2, expenditureLineCount: 15, openingBankBalance: "100.00", closingBankBalance: "200.00", certificationCount: 2, confirmedCertificationCount: 2 };
+  assert.equal(quarterlyExpenditureCompletion(complete).readyForSubmission, true);
+  assert.equal(quarterlyExpenditureCompletion({ ...complete, closingBankBalance: null }).readyForSubmission, false);
 });
 
 test("only current Draft versions are editable", () => {
