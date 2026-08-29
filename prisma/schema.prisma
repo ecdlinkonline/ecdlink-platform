@@ -365,6 +365,26 @@ enum GrantIndicatorStatus {
   NOT_APPLICABLE
 }
 
+enum GrantReportBeneficiaryCategory {
+  CHILDREN_0_18
+  YOUTH_18_35
+  ADULTS_35_65
+  OLDER_PERSONS_65_PLUS
+  PEOPLE_WITH_DISABILITIES
+}
+
+enum GrantReportRacialGroup {
+  AFRICAN
+  COLOURED
+  INDIAN_ASIAN
+  WHITE
+}
+
+enum GrantReportCertificationParty {
+  COMPILER
+  APPROVER
+}
+
 enum GrantReportDocumentType {
   INVOICE
   BANK_STATEMENT
@@ -374,6 +394,7 @@ enum GrantReportDocumentType {
   INDICATOR_EVIDENCE
   BENEFICIARY_EVIDENCE
   SIGNED_REPORT
+  AUDITED_FINANCIAL_STATEMENTS
   OTHER
 }
 
@@ -568,6 +589,7 @@ model User {
   grantReportVersionsSubmitted  GrantReportVersion[]           @relation("GrantReportVersionsSubmittedBy")
   grantReportDocumentsUploaded  GrantReportDocument[]          @relation("GrantReportDocumentsUploadedBy")
   grantReportReviews            GrantReportReview[]            @relation("GrantReportReviewsByUser")
+  grantReportCertifications     GrantReportCertification[]     @relation("GrantReportCertificationsConfirmedBy")
   grantExpenseAllocations       GrantExpenseAllocation[]       @relation("GrantExpenseAllocationsByUser")
   grantExpenseReversals         GrantExpenseAllocation[]       @relation("GrantExpenseAllocationReversals")
 
@@ -2217,6 +2239,8 @@ model GrantReportVersion {
   executiveSummary            String?
   objectivesNarrative         String?
   deliverablesNarrative       String?
+  organisationalChanges      String?
+  communityChanges           String?
   challenges                  String?
   lessonsLearned              String?
   nextSteps                   String?
@@ -2246,6 +2270,10 @@ model GrantReportVersion {
   documents                   GrantReportDocument[]
   reviews                     GrantReportReview[]
   expenseEntries              GrantReportExpenseEntry[]
+  beneficiaryBreakdowns       GrantReportBeneficiaryBreakdown[]
+  racialProfileRows           GrantReportRacialProfileRow[]
+  sustainabilityItems         GrantReportSustainabilityItem[]
+  certifications              GrantReportCertification[]
 
   @@unique([grantReportId, versionNumber])
   @@index([grantReportId, status])
@@ -2264,6 +2292,9 @@ model GrantReportFinancialLine {
   approvedBudget       Decimal?                  @db.Decimal(14, 2)
   quarterlyBudget      Decimal?                  @db.Decimal(14, 2)
   quarterlyActual      Decimal?                  @db.Decimal(14, 2)
+  costingFrameworkPercentage Decimal?            @db.Decimal(5, 2)
+  fundingSourceActual Decimal?                   @db.Decimal(14, 2)
+  otherSourceActual   Decimal?                   @db.Decimal(14, 2)
   cumulativeActual     Decimal?                  @db.Decimal(14, 2)
   estimatedExpenditure Decimal?                  @db.Decimal(14, 2)
   variance             Decimal?                  @db.Decimal(14, 2)
@@ -2277,6 +2308,75 @@ model GrantReportFinancialLine {
 
   @@index([grantReportVersionId, lineType, displayOrder])
   @@index([categoryCode])
+}
+
+model GrantReportBeneficiaryBreakdown {
+  id                   String                         @id @default(cuid())
+  grantReportVersionId String
+  category             GrantReportBeneficiaryCategory
+  total                Int                            @default(0)
+  male                 Int                            @default(0)
+  female               Int                            @default(0)
+  displayOrder         Int                            @default(0)
+  createdAt            DateTime                       @default(now())
+  updatedAt            DateTime                       @updatedAt
+  version              GrantReportVersion             @relation(fields: [grantReportVersionId], references: [id], onDelete: Cascade, map: "GrantReportBeneficiary_version_fkey")
+
+  @@unique([grantReportVersionId, category], map: "GrantReportBeneficiary_version_category_key")
+  @@index([grantReportVersionId, displayOrder], map: "GrantReportBeneficiary_version_order_idx")
+}
+
+model GrantReportRacialProfileRow {
+  id                       String                 @id @default(cuid())
+  grantReportVersionId     String
+  racialGroup              GrantReportRacialGroup
+  children                 Int                    @default(0)
+  youth                    Int                    @default(0)
+  men                      Int                    @default(0)
+  women                    Int                    @default(0)
+  olderPersons             Int                    @default(0)
+  peopleWithDisabilities   Int                    @default(0)
+  displayOrder             Int                    @default(0)
+  createdAt                DateTime               @default(now())
+  updatedAt                DateTime               @updatedAt
+  version                  GrantReportVersion     @relation(fields: [grantReportVersionId], references: [id], onDelete: Cascade, map: "GrantReportRacial_version_fkey")
+
+  @@unique([grantReportVersionId, racialGroup], map: "GrantReportRacial_version_group_key")
+  @@index([grantReportVersionId, displayOrder], map: "GrantReportRacial_version_order_idx")
+}
+
+model GrantReportSustainabilityItem {
+  id                   String             @id @default(cuid())
+  grantReportVersionId String
+  plan                 String
+  progressToDate       String
+  displayOrder         Int                @default(0)
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+  version              GrantReportVersion @relation(fields: [grantReportVersionId], references: [id], onDelete: Cascade, map: "GrantReportSustainability_version_fkey")
+
+  @@index([grantReportVersionId, displayOrder], map: "GrantReportSustainability_version_order_idx")
+}
+
+model GrantReportCertification {
+  id                       String                        @id @default(cuid())
+  grantReportVersionId     String
+  party                    GrantReportCertificationParty
+  nameSnapshot             String
+  designationSnapshot      String
+  certificationDate        DateTime?
+  digitallyConfirmed       Boolean                       @default(false)
+  confirmedByUserId        String?
+  confirmedAt              DateTime?
+  confirmationTextSnapshot String?
+  displayOrder             Int                           @default(0)
+  createdAt                DateTime                      @default(now())
+  updatedAt                DateTime                      @updatedAt
+  version                  GrantReportVersion            @relation(fields: [grantReportVersionId], references: [id], onDelete: Cascade, map: "GrantReportCertification_version_fkey")
+  confirmedBy              User?                         @relation("GrantReportCertificationsConfirmedBy", fields: [confirmedByUserId], references: [id], onDelete: Restrict, map: "GrantReportCertification_confirmer_fkey")
+
+  @@index([grantReportVersionId, party, displayOrder], map: "GrantReportCertification_version_party_order_idx")
+  @@index([confirmedByUserId, confirmedAt], map: "GrantReportCertification_confirmer_time_idx")
 }
 
 model GrantReportIndicator {
