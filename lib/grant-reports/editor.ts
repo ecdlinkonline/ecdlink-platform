@@ -4,7 +4,7 @@ export const nlcGrantReportSections = [
   { id: "beneficiaries", label: "Beneficiaries" },
   { id: "sustainability", label: "Sustainability & Challenges" },
   { id: "financial", label: "Financial Progress" },
-  { id: "documents", label: "Documents" },
+  { id: "documents", label: "Supporting Documents" },
   { id: "certification", label: "Certification & Review" },
 ] as const;
 

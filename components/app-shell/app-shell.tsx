@@ -22,13 +22,17 @@ import { cn } from "@/lib/utils";
 import { useTheme } from "@/components/app-shell/theme-provider";
 import { NotificationCentre } from "@/components/notifications/notification-centre";
 import { SuperAdminWorkspaceSearch } from "@/components/app-shell/super-admin-workspace-search";
+import { BreadcrumbLabelContext, type BreadcrumbOverride } from "@/components/app-shell/breadcrumb-label";
 
-function buildBreadcrumbs(pathname: string) {
+function buildBreadcrumbs(pathname: string, breadcrumbOverride: BreadcrumbOverride | null) {
   const parts = pathname.split("/").filter(Boolean);
 
   return parts.map((part, index) => {
     const href = `/${parts.slice(0, index + 1).join("/")}`;
-    const label = part
+    const isGrantReportId = parts.length === 4 && index === 3 && parts[0] === "dashboard" && parts[1] === "super-admin" && parts[2] === "reports";
+    const label = isGrantReportId
+      ? breadcrumbOverride?.pathname === pathname ? breadcrumbOverride.label : "Progress Report"
+      : part
       .split("-")
       .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
       .join(" ");
@@ -117,12 +121,14 @@ export function AppShell({
   children: React.ReactNode;
 }) {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [breadcrumbOverride, setBreadcrumbOverride] = useState<BreadcrumbOverride | null>(null);
   const pathname = usePathname();
-  const breadcrumbs = useMemo(() => buildBreadcrumbs(pathname), [pathname]);
+  const breadcrumbs = useMemo(() => buildBreadcrumbs(pathname, breadcrumbOverride), [breadcrumbOverride, pathname]);
   const config = getDashboardConfig(role);
   const { theme, toggleTheme } = useTheme();
 
   return (
+    <BreadcrumbLabelContext.Provider value={setBreadcrumbOverride}>
     <div className="min-h-screen bg-brand-accent text-brand-ink dark:bg-slate-950 dark:text-white">
       <aside className="fixed inset-y-0 left-0 z-40 hidden w-72 border-r border-brand-line bg-white lg:block dark:border-slate-800 dark:bg-slate-950">
         <SidebarContent role={role} />
@@ -213,5 +219,6 @@ export function AppShell({
         <main className="px-4 py-6 sm:px-6 lg:px-8">{children}</main>
       </div>
     </div>
+    </BreadcrumbLabelContext.Provider>
   );
 }
