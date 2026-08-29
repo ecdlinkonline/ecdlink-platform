@@ -59,11 +59,19 @@ export const createGrantReportingObligationSchema = z.object({
   requiresFunderApproval: z.coerce.boolean().default(true),
   requiresSuperAdminApproval: z.coerce.boolean().default(false),
 }).superRefine((input, context) => {
+  const standardBasis = input.type === "INTERIM" || input.type === "FINAL"
+    ? "PERIOD"
+    : input.type === "QUARTERLY_EXPENDITURE" || input.type === "QUARTERLY_CASH_FLOW"
+      ? "QUARTER"
+      : null;
+  if (standardBasis && input.basis !== standardBasis) context.addIssue({ code: "custom", path: ["basis"], message: `${input.type} reports require the ${standardBasis} obligation basis.` });
   if (input.reportingPeriodStart && input.reportingPeriodEnd && input.reportingPeriodEnd < input.reportingPeriodStart) context.addIssue({ code: "custom", path: ["reportingPeriodEnd"], message: "Reporting period end must be on or after its start." });
   if (input.basis === "QUARTER" && (!input.financialYear || !input.quarter || !input.reportingPeriodStart || !input.reportingPeriodEnd)) context.addIssue({ code: "custom", path: ["basis"], message: "Quarter-based obligations require a financial year, quarter and reporting period." });
   if (input.basis === "TRANCHE" && !input.grantTrancheId) context.addIssue({ code: "custom", path: ["grantTrancheId"], message: "Tranche-based obligations require a tranche." });
   if (["PERIOD", "FINAL"].includes(input.basis) && (!input.reportingPeriodStart || !input.reportingPeriodEnd)) context.addIssue({ code: "custom", path: ["basis"], message: "Period and final obligations require reporting period dates." });
   if (input.basis !== "TRANCHE" && input.grantTrancheId) context.addIssue({ code: "custom", path: ["grantTrancheId"], message: "Only tranche-based obligations may select a tranche." });
+  if (input.basis !== "QUARTER" && (input.financialYear || input.quarter)) context.addIssue({ code: "custom", path: ["financialYear"], message: "Financial year and quarter are only valid for quarter-based obligations." });
+  if (!["QUARTER", "PERIOD", "FINAL"].includes(input.basis) && (input.reportingPeriodStart || input.reportingPeriodEnd)) context.addIssue({ code: "custom", path: ["reportingPeriodStart"], message: "Reporting period dates are not valid for this obligation basis." });
 });
 
 export type CreateGrantAwardInput = z.infer<typeof createGrantAwardSchema>;

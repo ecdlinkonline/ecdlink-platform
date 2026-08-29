@@ -95,7 +95,7 @@ test("obligation creation eagerly creates Draft report version 1 and audits the 
     grantReport: { create: async ({ data }: { data: Record<string, unknown> }) => { captured.report = data; return { id: "report-1", ...data }; } },
     auditLog: { create: async ({ data }: { data: Record<string, unknown> }) => { captured.audit = data; return { id: "audit-1" }; } },
   };
-  const input = createGrantReportingObligationSchema.parse({ grantAwardId: "award-1", type: "FINAL", basis: "FINAL", title: "Final report", reportingPeriodStart: "2026-01-01", reportingPeriodEnd: "2026-12-31", dueAt: "2027-01-31" });
+  const input = createGrantReportingObligationSchema.parse({ grantAwardId: "award-1", type: "FINAL", basis: "PERIOD", title: "Final report", reportingPeriodStart: "2026-01-01", reportingPeriodEnd: "2026-12-31", dueAt: "2027-01-31" });
   await createGrantReportingObligation(input, "internal-user-1", runner(transaction));
   assert.equal(captured.obligation?.createdByUserId, "internal-user-1");
   assert.equal(captured.report?.status, "DRAFT");

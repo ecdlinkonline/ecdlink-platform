@@ -30,10 +30,19 @@ test("signed agreement metadata is optional and valid dates and signature state 
 });
 
 test("obligation basis-specific requirements are enforced", () => {
-  const base = { grantAwardId: "award-1", type: "INTERIM", title: "Quarter one", dueAt: "2026-10-01" };
+  const base = { grantAwardId: "award-1", type: "CUSTOM", title: "Quarter one", dueAt: "2026-10-01" };
   assert.equal(createGrantReportingObligationSchema.safeParse({ ...base, basis: "QUARTER" }).success, false);
   assert.equal(createGrantReportingObligationSchema.safeParse({ ...base, basis: "QUARTER", financialYear: "2026", quarter: 1, reportingPeriodStart: "2026-01-01", reportingPeriodEnd: "2026-03-31" }).success, true);
   assert.equal(createGrantReportingObligationSchema.safeParse({ ...base, basis: "TRANCHE" }).success, false);
   assert.equal(createGrantReportingObligationSchema.safeParse({ ...base, basis: "TRANCHE", grantTrancheId: "tranche-1" }).success, true);
   assert.equal(createGrantReportingObligationSchema.safeParse({ ...base, basis: "FINAL" }).success, false);
+});
+
+test("standard report types reject inconsistent hidden basis values", () => {
+  const period = { grantAwardId: "award-1", title: "Report", reportingPeriodStart: "2026-01-01", reportingPeriodEnd: "2026-03-31", dueAt: "2026-04-15" };
+  assert.equal(createGrantReportingObligationSchema.safeParse({ ...period, type: "INTERIM", basis: "QUARTER", financialYear: "2026", quarter: 1 }).success, false);
+  assert.equal(createGrantReportingObligationSchema.safeParse({ ...period, type: "FINAL", basis: "FINAL" }).success, false);
+  assert.equal(createGrantReportingObligationSchema.safeParse({ ...period, type: "QUARTERLY_EXPENDITURE", basis: "QUARTER", financialYear: "2026", quarter: 1 }).success, true);
+  assert.equal(createGrantReportingObligationSchema.safeParse({ ...period, type: "INTERIM", basis: "PERIOD", financialYear: "2026", quarter: 1 }).success, false);
+  assert.equal(createGrantReportingObligationSchema.safeParse({ ...period, type: "CUSTOM", basis: "TRANCHE", grantTrancheId: "tranche-1" }).success, false);
 });
