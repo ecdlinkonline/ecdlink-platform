@@ -160,7 +160,10 @@ export class StorageService {
       } catch {
         console.error("Storage rollback failed after FileAsset persistence failure.", { fileAssetId });
       }
-      throw new StorageUploadError({ cause: error });
+      throw new StorageUploadError({
+        cause: error,
+        diagnostic: { failureCode: "file_asset_persistence_failure" },
+      });
     }
   }
 

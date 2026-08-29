@@ -15,7 +15,7 @@
     "db:studio": "prisma studio",
     "db:reset": "prisma migrate reset",
     "db:health": "tsx scripts/db-health.ts",
-    "test:storage": "tsx --conditions=react-server --test lib/storage/path.test.ts lib/storage/validation.test.ts lib/storage/storage-service.test.ts",
+    "test:storage": "tsx --conditions=react-server --test lib/storage/path.test.ts lib/storage/validation.test.ts lib/storage/storage-service.test.ts lib/storage/supabase-storage-provider.test.ts lib/storage/config.test.ts",
     "test:funding-documents": "tsx --conditions=react-server --test lib/services/funding-documents.test.ts lib/repositories/funding-timeline.test.ts",
     "test:notifications": "tsx --conditions=react-server --test lib/notifications/builders.test.ts lib/notifications/preferences.test.ts",
     "test:funding-communication": "tsx --conditions=react-server --test lib/services/funding-communication.test.ts",

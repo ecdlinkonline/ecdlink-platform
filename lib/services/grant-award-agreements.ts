@@ -1,6 +1,8 @@
 import "server-only";
 import { prisma } from "@/lib/db/prisma";
 import { storage } from "@/lib/storage/storage-service";
+import { storageConfigDiagnostic } from "@/lib/storage/config";
+import { StorageError } from "@/lib/storage/errors";
 import type { SignedFileAccess } from "@/lib/storage/types";
 import { defaultDocumentPolicy, type StorageUploadFile } from "@/lib/storage/validation";
 
@@ -19,14 +21,27 @@ export class GrantAwardAgreementError extends Error {
 }
 
 export async function stageGrantAwardAgreement(input: { actorUserId: string; file: StorageUploadFile }) {
-  return storage.uploadFileAsset({
-    file: input.file,
-    module: "funding",
-    ownerId: input.actorUserId,
-    entityId: GRANT_AWARD_STAGING_ENTITY,
-    uploadedByUserId: input.actorUserId,
-    policy: grantAwardAgreementPolicy,
-  });
+  try {
+    return await storage.uploadFileAsset({
+      file: input.file,
+      module: "funding",
+      ownerId: input.actorUserId,
+      entityId: GRANT_AWARD_STAGING_ENTITY,
+      uploadedByUserId: input.actorUserId,
+      policy: grantAwardAgreementPolicy,
+    });
+  } catch (error) {
+    if (error instanceof StorageError) {
+      console.error("[grant-award-storage-diagnostic]", {
+        provider: "supabase",
+        operation: "agreement_stage_upload",
+        ...storageConfigDiagnostic(),
+        failureCode: error.diagnostic?.failureCode ?? "unclassified_storage_failure",
+        httpStatus: error.diagnostic?.httpStatus,
+      });
+    }
+    throw error;
+  }
 }
 
 export async function rollbackStagedGrantAwardAgreement(input: { actorUserId: string; fileAssetId: string }) {
