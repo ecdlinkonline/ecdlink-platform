@@ -54,6 +54,14 @@ test("valid quarterly section payload uses the same authorized section-save boun
   assert.deepEqual(captured, { reportId: "report-1", input: quarterlyBody, actorUserId: "internal-admin" });
 });
 
+test("valid quarterly cash flow payload uses the same database-authorized section-save boundary", async () => {
+  let captured: unknown;
+  const cashFlowBody = { section: "cash_received", data: { rows: [{ lineType: "FUNDING_RECEIVED", categoryName: "Subsidy", amount: "500.00" }], totalCashAvailable: "500.00" } };
+  const handler = createGrantReportSectionHandler(dependencies({ save: async (reportId, input, actorUserId) => { captured = { reportId, input, actorUserId }; return {}; } }));
+  assert.equal((await handler(request(cashFlowBody), context)).status, 200);
+  assert.deepEqual(captured, { reportId: "report-1", input: cashFlowBody, actorUserId: "internal-admin" });
+});
+
 test("invalid payload and invalid report access fail safely", async () => {
   const invalid = createGrantReportSectionHandler(dependencies());
   assert.equal((await invalid(request({ section: "beneficiaries", data: {} }), context)).status, 422);

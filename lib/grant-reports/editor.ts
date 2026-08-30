@@ -20,6 +20,16 @@ export const dbeQuarterlyExpenditureSections = [
 
 export type DbeQuarterlyExpenditureSectionId = (typeof dbeQuarterlyExpenditureSections)[number]["id"];
 
+export const dbeQuarterlyCashFlowSections = [
+  { id: "cash_flow_general", label: "General Information" },
+  { id: "cash_received", label: "Cash Received" },
+  { id: "operating_expenses", label: "Operating Expenses" },
+  { id: "variance_review", label: "Variance & Reasons" },
+  { id: "certification", label: "Certification & Review" },
+] as const;
+
+export type DbeQuarterlyCashFlowSectionId = (typeof dbeQuarterlyCashFlowSections)[number]["id"];
+
 export const dbeQuarterlyExpenditureCategories = [
   "Nutritional Requirements",
   "Facility / Rent / Utilities",
@@ -38,6 +48,23 @@ export const dbeQuarterlyExpenditureCategories = [
   "Other Expenses",
 ] as const;
 
+export const dbeQuarterlyCashFlowExpenseCategories = [
+  "Principal",
+  "Practitioners",
+  "Bookkeeper",
+  "Cleaner",
+  "Cooker",
+  "Gardener",
+  "Electricity / Rent / Telephone / Stationery",
+  "Cleaning Materials",
+  "Toys",
+  "Audit Fees",
+  "Nutrition",
+  "Bank Charges",
+  "Transport",
+  "Other Operating Expenses",
+] as const;
+
 export const grantReportBeneficiaryCategories = [
   "CHILDREN_0_18",
   "YOUTH_18_35",
@@ -52,6 +79,7 @@ export const grantReportCertificationParties = ["COMPILER", "APPROVER"] as const
 export function resolveGrantReportTemplate(reportType: string) {
   if (reportType === "INTERIM" || reportType === "FINAL") return "NLC";
   if (reportType === "QUARTERLY_EXPENDITURE") return "DBE_QUARTERLY_EXPENDITURE";
+  if (reportType === "QUARTERLY_CASH_FLOW") return "DBE_QUARTERLY_CASH_FLOW";
   return "COMING_SOON";
 }
 
@@ -76,6 +104,36 @@ export function buildQuarterlyExpenditureSubtitle(input: {
       return true;
     })
     .join(" · ");
+}
+
+export function buildQuarterlyCashFlowSubtitle(input: {
+  reportTitle: string;
+  centreName: string | null;
+  leadOrganisation: string | null;
+  financialYear: string | null;
+  quarter: number | null;
+}) {
+  const quarterContext = input.quarter && input.financialYear ? `Q${input.quarter} ${input.financialYear}` : null;
+  const strippedTitle = input.reportTitle.trim().replace(/^Quarterly Cash Flow Report\s*(?:[-–—:]\s*)?/i, "").trim();
+  const usefulTitle = strippedTitle && strippedTitle.toLocaleLowerCase() !== quarterContext?.toLocaleLowerCase() ? strippedTitle : null;
+  const seen = new Set<string>();
+  return [usefulTitle, input.centreName, input.leadOrganisation, quarterContext]
+    .filter((value): value is string => Boolean(value?.trim()))
+    .filter((value) => {
+      const normalized = value.trim().toLocaleLowerCase();
+      if (seen.has(normalized)) return false;
+      seen.add(normalized);
+      return true;
+    })
+    .join(" · ");
+}
+
+export function mapQuarterlyExpenditureIncomeToCashReceived(rows: Array<{ lineType: "FUNDING_RECEIVED" | "OTHER_INCOME"; categoryName: string; amount: string | null }>) {
+  return rows.map((row) => ({
+    lineType: row.lineType,
+    categoryName: row.lineType === "FUNDING_RECEIVED" ? "Subsidy" : /^other income$/i.test(row.categoryName.trim()) ? "Other Income" : row.categoryName,
+    amount: row.amount,
+  }));
 }
 
 export function isGrantReportVersionEditable(reportStatus: string, versionStatus: string) {
@@ -140,6 +198,37 @@ export function quarterlyExpenditureTotals(rows: Array<{
   const totalOtherSourceExpenditure = sumGrantAmounts(rows.map((row) => row.otherSourceActual));
   const totalExpenditure = addGrantAmounts(totalFundingSourceExpenditure, totalOtherSourceExpenditure);
   return { totalAllocatedBudget, totalFundingSourceExpenditure, totalOtherSourceExpenditure, totalExpenditure };
+}
+
+export function quarterlyCashFlowTotals(cashReceived: Array<string | null | undefined>, expenses: Array<{ quarterlyBudget: string | null; estimatedExpenditure: string | null }>) {
+  const totalCashAvailable = sumGrantAmounts(cashReceived);
+  const totalQuarterlyBudget = sumGrantAmounts(expenses.map((row) => row.quarterlyBudget));
+  const totalExpenditure = sumGrantAmounts(expenses.map((row) => row.estimatedExpenditure));
+  const totalVariance = totalQuarterlyBudget === null || totalExpenditure === null ? null : subtractGrantAmounts(totalQuarterlyBudget, totalExpenditure);
+  const remainingCash = totalCashAvailable === null || totalExpenditure === null ? null : subtractGrantAmounts(totalCashAvailable, totalExpenditure);
+  return { totalCashAvailable, totalQuarterlyBudget, totalExpenditure, totalVariance, remainingCash };
+}
+
+export function quarterlyCashFlowCompletion(input: {
+  financialYear: string | null;
+  quarter: number | null;
+  reportingPeriodStart: string | null;
+  reportingPeriodEnd: string | null;
+  cashReceivedLineCount: number;
+  operatingExpenseLineCount: number;
+  unresolvedVarianceCount: number;
+  certificationCount: number;
+  confirmedCertificationCount: number;
+}) {
+  const checks = [
+    Boolean(input.financialYear && input.quarter && input.reportingPeriodStart && input.reportingPeriodEnd),
+    input.cashReceivedLineCount > 0,
+    input.operatingExpenseLineCount > 0,
+    input.unresolvedVarianceCount === 0,
+    input.certificationCount === grantReportCertificationParties.length && input.confirmedCertificationCount === grantReportCertificationParties.length,
+  ];
+  const complete = checks.filter(Boolean).length;
+  return { percentage: Math.round((complete / checks.length) * 100), structurallyComplete: complete === checks.length, readyForSubmission: complete === checks.length, completedChecks: complete, totalChecks: checks.length };
 }
 
 export function quarterlyExpenditureCompletion(input: {

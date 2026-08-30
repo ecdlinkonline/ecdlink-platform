@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { addGrantAmounts, grantReportBeneficiaryCategories, grantReportCertificationParties, grantReportRacialGroups, quarterlyExpenditureTotals, subtractGrantAmounts, sumGrantAmounts } from "@/lib/grant-reports/editor";
+import { addGrantAmounts, grantReportBeneficiaryCategories, grantReportCertificationParties, grantReportRacialGroups, quarterlyCashFlowTotals, quarterlyExpenditureTotals, subtractGrantAmounts, sumGrantAmounts } from "@/lib/grant-reports/editor";
 
 const optionalId = z.string().trim().min(1).optional().or(z.literal("").transform(() => undefined));
 const optionalDate = z.preprocess(
@@ -250,6 +250,60 @@ export const saveQuarterlyBankReconciliationSchema = z.object({
   }),
 });
 
+export const saveQuarterlyCashFlowGeneralSchema = z.object({
+  section: z.literal("cash_flow_general"),
+  data: z.object({
+    financialYear: z.string().trim().min(1).max(20),
+    quarter: z.coerce.number().int().min(1).max(4),
+    reportingPeriodStart: z.string().date(),
+    reportingPeriodEnd: z.string().date(),
+  }).superRefine((input, context) => {
+    if (input.reportingPeriodEnd < input.reportingPeriodStart) context.addIssue({ code: "custom", path: ["reportingPeriodEnd"], message: "Reporting period end must be on or after its start." });
+  }),
+});
+
+export const saveQuarterlyCashReceivedSchema = z.object({
+  section: z.literal("cash_received"),
+  data: z.object({
+    rows: z.array(quarterlyIncomeRow).min(1).max(100),
+    totalCashAvailable: money,
+  }).superRefine((input, context) => {
+    const expected = sumGrantAmounts(input.rows.map((row) => row.amount));
+    if (expected === null || expected !== sumGrantAmounts([input.totalCashAvailable])) context.addIssue({ code: "custom", path: ["totalCashAvailable"], message: "Total cash available must equal the sum of the cash received lines." });
+  }),
+});
+
+const quarterlyCashFlowExpenseRow = z.object({
+  id: reportRowId,
+  categoryName: z.string().trim().min(1).max(500),
+  quarterlyBudget: money.nullable(),
+  estimatedExpenditure: money.nullable(),
+  variance: z.string().trim().regex(/^-?\d{1,12}(?:\.\d{1,2})?$/, "Enter a valid variance with no more than two decimal places."),
+  reasonForVariance: z.string().trim().max(2_000).nullable(),
+}).superRefine((row, context) => {
+  const expected = subtractGrantAmounts(row.quarterlyBudget ?? "0.00", row.estimatedExpenditure ?? "0.00");
+  if (expected === null || expected !== normalizeSignedMoney(row.variance)) context.addIssue({ code: "custom", path: ["variance"], message: "Variance must equal quarterly budget minus estimated or actual expenditure." });
+});
+
+export const saveQuarterlyCashFlowExpensesSchema = z.object({
+  section: z.literal("operating_expenses"),
+  data: z.object({
+    rows: z.array(quarterlyCashFlowExpenseRow).min(1).max(250),
+    totalCashAvailable: money,
+    totalQuarterlyBudget: money,
+    totalExpenditure: money,
+    totalVariance: z.string().trim().regex(/^-?\d{1,12}(?:\.\d{1,2})?$/),
+    remainingCash: z.string().trim().regex(/^-?\d{1,12}(?:\.\d{1,2})?$/),
+  }).superRefine((input, context) => {
+    const totals = quarterlyCashFlowTotals([], input.rows);
+    if (totals.totalQuarterlyBudget !== sumGrantAmounts([input.totalQuarterlyBudget])) context.addIssue({ code: "custom", path: ["totalQuarterlyBudget"], message: "The quarterly budget total does not match the operating expense lines." });
+    if (totals.totalExpenditure !== sumGrantAmounts([input.totalExpenditure])) context.addIssue({ code: "custom", path: ["totalExpenditure"], message: "The expenditure total does not match the operating expense lines." });
+    if (totals.totalVariance !== normalizeSignedMoney(input.totalVariance)) context.addIssue({ code: "custom", path: ["totalVariance"], message: "The variance total does not match the operating expense lines." });
+    const expectedRemaining = subtractGrantAmounts(input.totalCashAvailable, input.totalExpenditure);
+    if (expectedRemaining !== normalizeSignedMoney(input.remainingCash)) context.addIssue({ code: "custom", path: ["remainingCash"], message: "Remaining cash must equal total cash available minus total expenditure." });
+  }),
+});
+
 export const saveGrantReportCertificationsSchema = z.object({
   section: z.literal("certification"),
   data: z.object({
@@ -279,6 +333,9 @@ export const saveGrantReportSectionSchema = z.discriminatedUnion("section", [
   saveQuarterlyIncomeSchema,
   saveQuarterlyExpenditureSchema,
   saveQuarterlyBankReconciliationSchema,
+  saveQuarterlyCashFlowGeneralSchema,
+  saveQuarterlyCashReceivedSchema,
+  saveQuarterlyCashFlowExpensesSchema,
   saveGrantReportCertificationsSchema,
 ]);
 

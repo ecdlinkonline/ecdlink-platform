@@ -1,5 +1,5 @@
 import { Prisma } from "@prisma/client";
-import { getGrantReportEditor, withGrantReportingTransaction } from "@/lib/repositories/grant-reports";
+import { findMatchingQuarterlyExpenditureIncome, getGrantReportEditor, withGrantReportingTransaction } from "@/lib/repositories/grant-reports";
 import type { CreateGrantAwardInput, CreateGrantReportingObligationInput, SaveGrantReportSectionInput } from "@/lib/validators/grant-reports";
 import { GRANT_AWARD_STAGING_ENTITY } from "@/lib/services/grant-award-agreements";
 
@@ -137,7 +137,7 @@ export async function requireMutableGrantReport(tx: Prisma.TransactionClient, re
           organisations: { where: { removedAt: null }, orderBy: [{ isPrimary: "desc" as const }, { addedAt: "asc" as const }], include: { fundingOrganisation: { select: { id: true, name: true } }, donorOrganisation: { select: { id: true, name: true, organisationName: true } } } },
         },
       },
-      obligation: { select: { tranche: { select: { id: true, trancheNumber: true, scheduledAmount: true, title: true } } } },
+      obligation: { select: { financialYear: true, quarter: true, tranche: { select: { id: true, trancheNumber: true, scheduledAmount: true, title: true } } } },
     },
   });
   if (!report) throw new GrantReportingServiceError("Grant report not found.", 404);
@@ -146,7 +146,7 @@ export async function requireMutableGrantReport(tx: Prisma.TransactionClient, re
   if (version.status !== "DRAFT" || ["SUBMITTED", "APPROVED", "ARCHIVED"].includes(report.status)) {
     throw new GrantReportingServiceError("This report version is immutable and cannot be edited.", 409);
   }
-  if (!["INTERIM", "FINAL", "QUARTERLY_EXPENDITURE"].includes(version.reportType)) {
+  if (!["INTERIM", "FINAL", "QUARTERLY_EXPENDITURE", "QUARTERLY_CASH_FLOW"].includes(version.reportType)) {
     throw new GrantReportingServiceError("This report template is not available for editing.", 422);
   }
   return { report, version };
@@ -163,10 +163,29 @@ export async function saveGrantReportSection(
     const { report, version } = await requireMutableGrantReport(tx, reportId);
     const nlcSections = ["general", "objectives", "beneficiaries", "sustainability", "financial", "certification"];
     const quarterlySections = ["quarterly_general", "quarterly_income", "quarterly_expenditure", "bank_reconciliation", "certification"];
-    const allowedSections = version.reportType === "QUARTERLY_EXPENDITURE" ? quarterlySections : nlcSections;
+    const cashFlowSections = ["cash_flow_general", "cash_received", "operating_expenses", "certification"];
+    const allowedSections = version.reportType === "QUARTERLY_EXPENDITURE" ? quarterlySections : version.reportType === "QUARTERLY_CASH_FLOW" ? cashFlowSections : nlcSections;
     if (!allowedSections.includes(input.section)) throw new GrantReportingServiceError("This section does not belong to the selected report type.", 422);
 
-    if (input.section === "quarterly_general") {
+    let effectiveTotalIncome = version.totalIncome;
+    if (version.reportType === "QUARTERLY_CASH_FLOW" && input.section !== "cash_received") {
+      const existingCashReceived = await tx.grantReportFinancialLine.findMany({ where: { grantReportVersionId: version.id, lineType: { in: ["FUNDING_RECEIVED", "OTHER_INCOME"] } }, select: { id: true }, take: 1 });
+      const financialYear = input.section === "cash_flow_general" ? input.data.financialYear : version.financialYear ?? report.obligation.financialYear;
+      const quarter = input.section === "cash_flow_general" ? input.data.quarter : version.quarter ?? report.obligation.quarter;
+      if (!existingCashReceived.length && financialYear && quarter) {
+        const source = await findMatchingQuarterlyExpenditureIncome({ grantAwardId: report.award.id, centreId: report.award.centre.id, financialYear, quarter }, tx);
+        if (source?.rows.length) {
+          for (const [displayOrder, row] of source.rows.entries()) await tx.grantReportFinancialLine.create({ data: { grantReportVersionId: version.id, lineType: row.lineType, categoryName: row.categoryName, quarterlyActual: row.amount, displayOrder } });
+          const fundingReceivedTotal = source.rows.filter((row) => row.lineType === "FUNDING_RECEIVED").reduce((total, row) => total.plus(row.amount ?? 0), new Prisma.Decimal(0));
+          const otherIncomeTotal = source.rows.filter((row) => row.lineType === "OTHER_INCOME").reduce((total, row) => total.plus(row.amount ?? 0), new Prisma.Decimal(0));
+          const totalIncome = fundingReceivedTotal.plus(otherIncomeTotal);
+          effectiveTotalIncome = totalIncome;
+          await tx.grantReportVersion.update({ where: { id: version.id }, data: { fundingReceivedTotal, otherIncomeTotal, totalIncome, surplusDeficit: totalIncome.minus(version.totalExpenditure) } });
+        }
+      }
+    }
+
+    if (input.section === "quarterly_general" || input.section === "cash_flow_general") {
       const centre = report.award.centre;
       const project = report.award.fundingProject;
       const lead = report.award.organisations[0];
@@ -238,7 +257,7 @@ export async function saveGrantReportSection(
         if (row.id) await tx.grantReportFinancialLine.update({ where: { id: row.id }, data });
         else await tx.grantReportFinancialLine.create({ data: { ...data, grantReportVersionId: version.id } });
       }
-    } else if (input.section === "quarterly_income") {
+    } else if (input.section === "quarterly_income" || input.section === "cash_received") {
       const existing = await tx.grantReportFinancialLine.findMany({ where: { grantReportVersionId: version.id, lineType: { in: ["FUNDING_RECEIVED", "OTHER_INCOME"] } }, select: { id: true, _count: { select: { documents: true, expenseEntries: true } } } });
       const requestedIds = input.data.rows.flatMap((row) => row.id ? [row.id] : []);
       if (new Set(requestedIds).size !== requestedIds.length || requestedIds.some((id) => !existing.some((row) => row.id === id))) throw new GrantReportingServiceError("One or more income rows do not belong to this report version.", 422);
@@ -269,6 +288,22 @@ export async function saveGrantReportSection(
       }
       const totalExpenditure = input.data.rows.reduce((total, row) => total.plus(row.fundingSourceActual ?? 0).plus(row.otherSourceActual ?? 0), new Prisma.Decimal(0));
       await tx.grantReportVersion.update({ where: { id: version.id }, data: { quarterlyExpenditureTotal: totalExpenditure, totalExpenditure, surplusDeficit: version.totalIncome.minus(totalExpenditure) } });
+    } else if (input.section === "operating_expenses") {
+      if (!new Prisma.Decimal(input.data.totalCashAvailable).equals(effectiveTotalIncome)) throw new GrantReportingServiceError("Total cash available does not match the saved cash received section.", 422);
+      const existing = await tx.grantReportFinancialLine.findMany({ where: { grantReportVersionId: version.id, lineType: "EXPENDITURE" }, select: { id: true, _count: { select: { documents: true, expenseEntries: true } } } });
+      const requestedIds = input.data.rows.flatMap((row) => row.id ? [row.id] : []);
+      if (new Set(requestedIds).size !== requestedIds.length || requestedIds.some((id) => !existing.some((row) => row.id === id))) throw new GrantReportingServiceError("One or more operating expense rows do not belong to this report version.", 422);
+      const removed = existing.filter((row) => !requestedIds.includes(row.id));
+      if (removed.some((row) => row._count.documents > 0 || row._count.expenseEntries > 0)) throw new GrantReportingServiceError("An operating expense row with linked evidence or expense entries cannot be removed.", 409);
+      if (removed.length) await tx.grantReportFinancialLine.deleteMany({ where: { id: { in: removed.map((row) => row.id) }, grantReportVersionId: version.id } });
+      for (const [displayOrder, row] of input.data.rows.entries()) {
+        const variance = new Prisma.Decimal(row.quarterlyBudget ?? 0).minus(row.estimatedExpenditure ?? 0);
+        const data = { lineType: "EXPENDITURE" as const, categoryName: row.categoryName, quarterlyBudget: row.quarterlyBudget, estimatedExpenditure: row.estimatedExpenditure, quarterlyActual: row.estimatedExpenditure, variance, reasonForVariance: row.reasonForVariance, displayOrder };
+        if (row.id) await tx.grantReportFinancialLine.update({ where: { id: row.id }, data });
+        else await tx.grantReportFinancialLine.create({ data: { ...data, grantReportVersionId: version.id } });
+      }
+      const totalExpenditure = input.data.rows.reduce((total, row) => total.plus(row.estimatedExpenditure ?? 0), new Prisma.Decimal(0));
+      await tx.grantReportVersion.update({ where: { id: version.id }, data: { quarterlyExpenditureTotal: totalExpenditure, totalExpenditure, surplusDeficit: effectiveTotalIncome.minus(totalExpenditure) } });
     } else if (input.section === "bank_reconciliation") {
       await tx.grantReportVersion.update({ where: { id: version.id }, data: { openingBankBalance: input.data.openingBankBalance, closingBankBalance: input.data.closingBankBalance } });
     } else if (input.section === "certification") {

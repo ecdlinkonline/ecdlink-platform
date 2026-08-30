@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createGrantAwardSchema, createGrantReportingObligationSchema, saveGrantReportBeneficiariesSchema, saveGrantReportCertificationsSchema, saveGrantReportFinancialSchema, saveQuarterlyBankReconciliationSchema, saveQuarterlyExpenditureGeneralSchema, saveQuarterlyExpenditureSchema, saveQuarterlyIncomeSchema } from "./grant-reports";
+import { createGrantAwardSchema, createGrantReportingObligationSchema, saveGrantReportBeneficiariesSchema, saveGrantReportCertificationsSchema, saveGrantReportFinancialSchema, saveQuarterlyBankReconciliationSchema, saveQuarterlyCashFlowExpensesSchema, saveQuarterlyCashFlowGeneralSchema, saveQuarterlyCashReceivedSchema, saveQuarterlyExpenditureGeneralSchema, saveQuarterlyExpenditureSchema, saveQuarterlyIncomeSchema } from "./grant-reports";
 
 const award = {
   sourceType: "MANUAL", centreId: "centre-1", fundingProjectId: "project-1", awardNumber: "AW-001", title: "Nutrition grant",
@@ -84,4 +84,20 @@ test("quarterly expenditure validates framework percentages, source splits, tota
   assert.equal(saveQuarterlyExpenditureSchema.safeParse({ ...valid, data: { ...valid.data, rows: [{ ...row, costingFrameworkPercentage: "100.01" }] } }).success, false);
   assert.equal(saveQuarterlyExpenditureSchema.safeParse({ ...valid, data: { ...valid.data, rows: [{ ...row, quarterlyActual: "250.14" }] } }).success, false);
   assert.equal(saveQuarterlyExpenditureSchema.safeParse({ ...valid, data: { ...valid.data, surplusDeficit: "749.84" } }).success, false);
+});
+
+test("quarterly cash flow validates general information and cash totals", () => {
+  assert.equal(saveQuarterlyCashFlowGeneralSchema.safeParse({ section: "cash_flow_general", data: { financialYear: "2026", quarter: 1, reportingPeriodStart: "2026-01-01", reportingPeriodEnd: "2026-03-31" } }).success, true);
+  const rows = [{ lineType: "FUNDING_RECEIVED", categoryName: "Subsidy", amount: "900.10" }, { lineType: "OTHER_INCOME", categoryName: "Other Income", amount: "99.90" }];
+  assert.equal(saveQuarterlyCashReceivedSchema.safeParse({ section: "cash_received", data: { rows, totalCashAvailable: "1000.00" } }).success, true);
+  assert.equal(saveQuarterlyCashReceivedSchema.safeParse({ section: "cash_received", data: { rows, totalCashAvailable: "999.99" } }).success, false);
+});
+
+test("quarterly cash flow validates expense variance, totals and remaining cash", () => {
+  const row = { categoryName: "Principal", quarterlyBudget: "500.00", estimatedExpenditure: "450.10", variance: "49.90", reasonForVariance: "Vacancy during the quarter" };
+  const valid = { section: "operating_expenses", data: { rows: [row], totalCashAvailable: "1000.00", totalQuarterlyBudget: "500.00", totalExpenditure: "450.10", totalVariance: "49.90", remainingCash: "549.90" } };
+  assert.equal(saveQuarterlyCashFlowExpensesSchema.safeParse(valid).success, true);
+  assert.equal(saveQuarterlyCashFlowExpensesSchema.safeParse({ ...valid, data: { ...valid.data, rows: [{ ...row, variance: "49.89" }] } }).success, false);
+  assert.equal(saveQuarterlyCashFlowExpensesSchema.safeParse({ ...valid, data: { ...valid.data, remainingCash: "549.89" } }).success, false);
+  assert.equal(saveQuarterlyCashFlowExpensesSchema.safeParse({ ...valid, data: { ...valid.data, rows: [{ ...row, reasonForVariance: "x".repeat(2001) }] } }).success, false);
 });

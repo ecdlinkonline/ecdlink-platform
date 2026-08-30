@@ -2,7 +2,7 @@ import "server-only";
 
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
-import { buildSuggestedGrantIndicators, dbeQuarterlyExpenditureCategories, grantReportCompletion, quarterlyExpenditureCompletion, resolveGrantReportTemplate } from "@/lib/grant-reports/editor";
+import { buildSuggestedGrantIndicators, dbeQuarterlyCashFlowExpenseCategories, dbeQuarterlyExpenditureCategories, grantReportCompletion, mapQuarterlyExpenditureIncomeToCashReceived, quarterlyCashFlowCompletion, quarterlyCashFlowTotals, quarterlyExpenditureCompletion, resolveGrantReportTemplate } from "@/lib/grant-reports/editor";
 import type { GrantReportFiltersInput } from "@/lib/validators/grant-reports";
 
 export function withGrantReportingTransaction<T>(operation: (tx: Prisma.TransactionClient) => Promise<T>) {
@@ -232,6 +232,55 @@ function decimalString(value: Prisma.Decimal | null | undefined) {
   return value?.toFixed(2) ?? null;
 }
 
+export type QuarterlyExpenditureIncomeSourceCriteria = {
+  grantAwardId: string;
+  centreId: string;
+  financialYear: string;
+  quarter: number;
+};
+
+export async function findMatchingQuarterlyExpenditureIncome(
+  criteria: QuarterlyExpenditureIncomeSourceCriteria,
+  client: Pick<Prisma.TransactionClient, "grantReportVersion"> = prisma,
+) {
+  for (const status of ["APPROVED", "SUBMITTED", "DRAFT"] as const) {
+    const candidates = await client.grantReportVersion.findMany({
+      where: {
+        reportType: "QUARTERLY_EXPENDITURE",
+        status,
+        financialYear: criteria.financialYear,
+        quarter: criteria.quarter,
+        financialLines: { some: { lineType: { in: ["FUNDING_RECEIVED", "OTHER_INCOME"] } } },
+        report: {
+          grantAwardId: criteria.grantAwardId,
+          status: status === "DRAFT" ? { in: ["DRAFT", "RETURNED"] } : status,
+          award: { centreId: criteria.centreId },
+          obligation: { type: "QUARTERLY_EXPENDITURE", financialYear: criteria.financialYear, quarter: criteria.quarter },
+        },
+      },
+      orderBy: [{ updatedAt: "desc" }, { versionNumber: "desc" }, { id: "desc" }],
+      take: 25,
+      select: {
+        id: true,
+        status: true,
+        versionNumber: true,
+        report: { select: { currentVersionNumber: true } },
+        financialLines: {
+          where: { lineType: { in: ["FUNDING_RECEIVED", "OTHER_INCOME"] } },
+          orderBy: [{ displayOrder: "asc" }, { createdAt: "asc" }],
+          select: { lineType: true, categoryName: true, quarterlyActual: true },
+        },
+      },
+    });
+    const current = candidates.find((candidate) => candidate.versionNumber === candidate.report.currentVersionNumber);
+    if (current) return {
+      status: current.status,
+      rows: mapQuarterlyExpenditureIncomeToCashReceived(current.financialLines.map((row) => ({ lineType: row.lineType as "FUNDING_RECEIVED" | "OTHER_INCOME", categoryName: row.categoryName, amount: decimalString(row.quarterlyActual) }))),
+    };
+  }
+  return null;
+}
+
 export async function getGrantReportEditor(reportId: string) {
   const report = await prisma.grantReport.findUnique({
     where: { id: reportId },
@@ -292,6 +341,17 @@ export async function getGrantReportEditor(reportId: string) {
   const suggestedIndicators = buildSuggestedGrantIndicators(report.award.fundingProject, version.indicators.length);
   const incomeLines = version.financialLines.filter((row) => row.lineType === "FUNDING_RECEIVED" || row.lineType === "OTHER_INCOME");
   const expenditureLines = version.financialLines.filter((row) => row.lineType === "EXPENDITURE");
+  const cashFlowFinancialYear = version.financialYear ?? (editable ? report.obligation.financialYear : null);
+  const cashFlowQuarter = version.quarter ?? (editable ? report.obligation.quarter : null);
+  const cashFlowIncomeSource = version.reportType === "QUARTERLY_CASH_FLOW" && editable && incomeLines.length === 0 && cashFlowFinancialYear && cashFlowQuarter
+    ? await findMatchingQuarterlyExpenditureIncome({ grantAwardId: report.award.id, centreId: report.award.centre.id, financialYear: cashFlowFinancialYear, quarter: cashFlowQuarter })
+    : null;
+  const cashFlowIncomeRows = incomeLines.length
+    ? incomeLines.map((row) => ({ id: row.id, lineType: row.lineType as "FUNDING_RECEIVED" | "OTHER_INCOME", categoryName: row.categoryName, amount: decimalString(row.quarterlyActual) }))
+    : cashFlowIncomeSource?.rows.length ? cashFlowIncomeSource.rows : [
+      { lineType: "FUNDING_RECEIVED" as const, categoryName: "Subsidy", amount: null },
+      { lineType: "OTHER_INCOME" as const, categoryName: "Other Income", amount: null },
+    ];
 
   const documents = version.documents.map((document) => ({
     id: document.id,
@@ -315,6 +375,16 @@ export async function getGrantReportEditor(reportId: string) {
     expenditureLineCount: expenditureLines.length,
     openingBankBalance: decimalString(version.openingBankBalance),
     closingBankBalance: decimalString(version.closingBankBalance),
+    certificationCount: version.certifications.length,
+    confirmedCertificationCount: version.certifications.filter((item) => item.digitallyConfirmed).length,
+  }) : version.reportType === "QUARTERLY_CASH_FLOW" ? quarterlyCashFlowCompletion({
+    financialYear: version.financialYear,
+    quarter: version.quarter,
+    reportingPeriodStart: dateValue(version.reportingPeriodStart),
+    reportingPeriodEnd: dateValue(version.reportingPeriodEnd),
+    cashReceivedLineCount: incomeLines.length,
+    operatingExpenseLineCount: expenditureLines.length,
+    unresolvedVarianceCount: expenditureLines.filter((row) => row.variance && !row.variance.isZero() && !row.reasonForVariance?.trim()).length,
     certificationCount: version.certifications.length,
     confirmedCertificationCount: version.certifications.filter((item) => item.digitallyConfirmed).length,
   }) : grantReportCompletion({
@@ -386,6 +456,15 @@ export async function getGrantReportEditor(reportId: string) {
       openingBankBalance: decimalString(version.openingBankBalance),
       closingBankBalance: decimalString(version.closingBankBalance),
       suggestedFundingReceivedTotal: suggestedFundingReceived,
+    },
+    quarterlyCashFlow: {
+      cashReceivedRows: cashFlowIncomeRows,
+      cashReceivedSaved: incomeLines.length > 0,
+      matchingExpenditureIncomeFound: Boolean(cashFlowIncomeSource),
+      operatingExpenseRows: expenditureLines.length ? expenditureLines.map((row) => ({ id: row.id, categoryName: row.categoryName, quarterlyBudget: decimalString(row.quarterlyBudget), estimatedExpenditure: decimalString(row.estimatedExpenditure), variance: decimalString(row.variance) ?? "0.00", reasonForVariance: row.reasonForVariance })) : dbeQuarterlyCashFlowExpenseCategories.map((categoryName) => ({ categoryName, quarterlyBudget: null, estimatedExpenditure: null, variance: "0.00", reasonForVariance: null })),
+      totals: {
+        ...quarterlyCashFlowTotals(cashFlowIncomeRows.map((row) => row.amount), expenditureLines.map((row) => ({ quarterlyBudget: decimalString(row.quarterlyBudget), estimatedExpenditure: decimalString(row.estimatedExpenditure) }))),
+      },
     },
     documents,
     certifications: version.certifications.map((row) => ({ id: row.id, party: row.party, nameSnapshot: row.nameSnapshot, designationSnapshot: row.designationSnapshot, certificationDate: dateValue(row.certificationDate), digitallyConfirmed: row.digitallyConfirmed, confirmedAt: dateValue(row.confirmedAt), confirmedBy: row.confirmedBy ? [row.confirmedBy.firstName, row.confirmedBy.lastName].filter(Boolean).join(" ") || row.confirmedBy.email || "Internal user" : null })),

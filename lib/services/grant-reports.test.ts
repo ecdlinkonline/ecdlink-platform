@@ -105,11 +105,11 @@ test("obligation creation eagerly creates Draft report version 1 and audits the 
 
 function reportSectionTransaction(versionStatus = "DRAFT", reportStatus = "DRAFT", reportType = "FINAL") {
   const captured: { sustainabilityRows?: unknown; certifications?: Array<Record<string, unknown>>; audit?: Record<string, unknown>; deleted?: boolean; versionUpdates: Array<Record<string, unknown>>; financialCreates: Array<Record<string, unknown>> } = { versionUpdates: [], financialCreates: [] };
-  const report = { id: "report-1", status: reportStatus, currentVersionNumber: 1, award: { id: "award-1", awardNumber: "AW-1", title: "Award", awardedAmount: 1000, currency: "ZAR", centre: { id: "centre-1", centreName: "Centre", npoNumber: null, physicalAddress: null, suburb: null, area: null, province: null, postalCode: null, contactPerson: null, phone: null, email: null }, fundingProject: { id: "project-1", title: "Project", objective: null, expectedOutcomes: [], requiredItems: [] }, organisations: [] }, obligation: { tranche: null } };
+  const report = { id: "report-1", status: reportStatus, currentVersionNumber: 1, award: { id: "award-1", awardNumber: "AW-1", title: "Award", awardedAmount: 1000, currency: "ZAR", centre: { id: "centre-1", centreName: "Centre", npoNumber: null, physicalAddress: null, suburb: null, area: null, province: null, postalCode: null, contactPerson: null, phone: null, email: null }, fundingProject: { id: "project-1", title: "Project", objective: null, expectedOutcomes: [], requiredItems: [] }, organisations: [] }, obligation: { financialYear: "2026", quarter: 1, tranche: null } };
   const version = { id: "version-1", versionNumber: 1, status: versionStatus, reportType, centreSnapshot: null, projectSnapshot: null, awardSnapshot: null, fundingOrganisationSnapshot: null, trancheSnapshot: null, totalIncome: new Prisma.Decimal("1000.00"), totalExpenditure: new Prisma.Decimal("200.00") };
   const transaction = {
     grantReport: { findUnique: async () => report },
-    grantReportVersion: { findUnique: async () => version, update: async ({ data }: { data: Record<string, unknown> }) => { captured.versionUpdates.push(data); return {}; } },
+    grantReportVersion: { findUnique: async () => version, findMany: async () => [], update: async ({ data }: { data: Record<string, unknown> }) => { captured.versionUpdates.push(data); return {}; } },
     grantReportFinancialLine: { findMany: async () => [], deleteMany: async () => ({}), create: async ({ data }: { data: Record<string, unknown> }) => { captured.financialCreates.push(data); return {}; }, update: async () => ({}) },
     grantReportSustainabilityItem: { deleteMany: async () => { captured.deleted = true; }, createMany: async ({ data }: { data: unknown }) => { captured.sustainabilityRows = data; } },
     grantReportCertification: { deleteMany: async () => { captured.deleted = true; }, createMany: async ({ data }: { data: Array<Record<string, unknown>> }) => { captured.certifications = data; } },
@@ -130,6 +130,15 @@ test("submitted quarterly expenditure versions are immutable", async () => {
   const input = saveGrantReportSectionSchema.parse({ section: "bank_reconciliation", data: { openingBankBalance: "100.00", closingBankBalance: "80.00" } });
   await assert.rejects(() => saveGrantReportSection("report-1", input, "internal-user-1", runner(transaction), async () => null), (error: unknown) => error instanceof GrantReportingServiceError && error.status === 409);
   assert.equal(captured.versionUpdates.length, 0);
+});
+
+test("submitted and approved quarterly cash flow versions are immutable", async () => {
+  for (const status of ["SUBMITTED", "APPROVED"]) {
+    const { transaction, captured } = reportSectionTransaction(status, status, "QUARTERLY_CASH_FLOW");
+    const input = saveGrantReportSectionSchema.parse({ section: "cash_received", data: { rows: [{ lineType: "FUNDING_RECEIVED", categoryName: "Subsidy", amount: "100.00" }], totalCashAvailable: "100.00" } });
+    await assert.rejects(() => saveGrantReportSection("report-1", input, "internal-user-1", runner(transaction), async () => null), (error: unknown) => error instanceof GrantReportingServiceError && error.status === 409);
+    assert.equal(captured.versionUpdates.length, 0);
+  }
 });
 
 test("sustainability rows persist transactionally and audit the internal actor", async () => {
@@ -182,4 +191,42 @@ test("quarterly bank balances persist and report-type section boundaries are enf
 
   const nlc = reportSectionTransaction();
   await assert.rejects(() => saveGrantReportSection("report-1", bankInput, "internal-user-1", runner(nlc.transaction), async () => null), (error: unknown) => error instanceof GrantReportingServiceError && error.status === 422);
+});
+
+test("cash received and operating expenses persist calculated cash-flow totals with the internal actor", async () => {
+  const cash = reportSectionTransaction("DRAFT", "DRAFT", "QUARTERLY_CASH_FLOW");
+  const cashInput = saveGrantReportSectionSchema.parse({ section: "cash_received", data: { rows: [{ lineType: "FUNDING_RECEIVED", categoryName: "Subsidy", amount: "900.10" }, { lineType: "OTHER_INCOME", categoryName: "Other Income", amount: "99.90" }], totalCashAvailable: "1000.00" } });
+  await saveGrantReportSection("report-1", cashInput, "internal-user-1", runner(cash.transaction), async () => ({ ok: true } as never));
+  assert.equal(String(cash.captured.versionUpdates[0].totalIncome), "1000");
+  assert.equal(cash.captured.audit?.actorUserId, "internal-user-1");
+
+  const expenses = reportSectionTransaction("DRAFT", "DRAFT", "QUARTERLY_CASH_FLOW");
+  const expenseInput = saveGrantReportSectionSchema.parse({ section: "operating_expenses", data: { rows: [{ categoryName: "Principal", quarterlyBudget: "500.00", estimatedExpenditure: "450.10", variance: "49.90", reasonForVariance: "Vacancy" }], totalCashAvailable: "1000.00", totalQuarterlyBudget: "500.00", totalExpenditure: "450.10", totalVariance: "49.90", remainingCash: "549.90" } });
+  await saveGrantReportSection("report-1", expenseInput, "internal-user-1", runner(expenses.transaction), async () => ({ ok: true } as never));
+  const createdExpense = expenses.captured.financialCreates.find((row) => row.lineType === "EXPENDITURE");
+  assert.equal(String(createdExpense?.variance), "49.9");
+  assert.equal(createdExpense?.reasonForVariance, "Vacancy");
+  assert.equal(String(expenses.captured.versionUpdates.at(-1)?.totalExpenditure), "450.1");
+});
+
+test("cash flow source income is copied once and never overwrites saved cash received rows", async () => {
+  const initialized = reportSectionTransaction("DRAFT", "DRAFT", "QUARTERLY_CASH_FLOW");
+  Object.assign(initialized.transaction.grantReportVersion, { findMany: async ({ where }: { where: { status: string } }) => where.status === "APPROVED" ? [{ id: "source-version", status: "APPROVED", versionNumber: 2, report: { currentVersionNumber: 2 }, financialLines: [{ lineType: "FUNDING_RECEIVED", categoryName: "Department subsidy", quarterlyActual: new Prisma.Decimal("800.00") }, { lineType: "OTHER_INCOME", categoryName: "Fundraising", quarterlyActual: new Prisma.Decimal("25.00") }] }] : [] });
+  const generalInput = saveGrantReportSectionSchema.parse({ section: "cash_flow_general", data: { financialYear: "2026", quarter: 1, reportingPeriodStart: "2026-01-01", reportingPeriodEnd: "2026-03-31" } });
+  await saveGrantReportSection("report-1", generalInput, "internal-user-1", runner(initialized.transaction), async () => ({ ok: true } as never));
+  assert.deepEqual(initialized.captured.financialCreates.slice(0, 2).map((row) => ({ lineType: row.lineType, categoryName: row.categoryName, amount: String(row.quarterlyActual) })), [{ lineType: "FUNDING_RECEIVED", categoryName: "Subsidy", amount: "800.00" }, { lineType: "OTHER_INCOME", categoryName: "Fundraising", amount: "25.00" }]);
+
+  const copiedThenExpense = reportSectionTransaction("DRAFT", "DRAFT", "QUARTERLY_CASH_FLOW");
+  Object.assign(copiedThenExpense.transaction.grantReportVersion, { findMany: async ({ where }: { where: { status: string } }) => where.status === "APPROVED" ? [{ id: "source-version", status: "APPROVED", versionNumber: 2, report: { currentVersionNumber: 2 }, financialLines: [{ lineType: "FUNDING_RECEIVED", categoryName: "Department subsidy", quarterlyActual: new Prisma.Decimal("800.00") }, { lineType: "OTHER_INCOME", categoryName: "Fundraising", quarterlyActual: new Prisma.Decimal("25.00") }] }] : [] });
+  const expenseInput = saveGrantReportSectionSchema.parse({ section: "operating_expenses", data: { rows: [{ categoryName: "Principal", quarterlyBudget: "500.00", estimatedExpenditure: "450.10", variance: "49.90", reasonForVariance: "Vacancy" }], totalCashAvailable: "825.00", totalQuarterlyBudget: "500.00", totalExpenditure: "450.10", totalVariance: "49.90", remainingCash: "374.90" } });
+  await saveGrantReportSection("report-1", expenseInput, "internal-user-1", runner(copiedThenExpense.transaction), async () => ({ ok: true } as never));
+  assert.equal(String(copiedThenExpense.captured.versionUpdates.at(-1)?.surplusDeficit), "374.9");
+
+  const saved = reportSectionTransaction("DRAFT", "DRAFT", "QUARTERLY_CASH_FLOW");
+  let sourceQueries = 0;
+  Object.assign(saved.transaction.grantReportFinancialLine, { findMany: async () => [{ id: "owned-cash-row" }] });
+  Object.assign(saved.transaction.grantReportVersion, { findMany: async () => { sourceQueries += 1; return []; } });
+  await saveGrantReportSection("report-1", generalInput, "internal-user-1", runner(saved.transaction), async () => ({ ok: true } as never));
+  assert.equal(sourceQueries, 0);
+  assert.equal(saved.captured.financialCreates.length, 0);
 });
