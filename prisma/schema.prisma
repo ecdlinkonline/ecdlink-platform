@@ -417,6 +417,62 @@ enum GrantExpenseSourceType {
   MANUAL
 }
 
+enum GrantBankImportStatus {
+  UPLOADING
+  EXTRACTING
+  NEEDS_REVIEW
+  READY_FOR_CONFIRMATION
+  CONFIRMED
+  FAILED
+  ARCHIVED
+}
+
+enum GrantBankStatementStatus {
+  PENDING
+  EXTRACTING
+  EXTRACTED
+  NEEDS_REVIEW
+  FAILED
+}
+
+enum GrantBankProcessingKind {
+  EXTRACTION
+  CLASSIFICATION
+}
+
+enum GrantBankProcessingStatus {
+  PENDING
+  RUNNING
+  SUCCEEDED
+  FAILED
+}
+
+enum GrantBankTransactionDirection {
+  DEBIT
+  CREDIT
+}
+
+enum GrantBankTransactionType {
+  INCOME
+  EXPENSE
+  TRANSFER
+  REVERSAL_REFUND
+  BANK_CHARGE
+  UNKNOWN
+}
+
+enum GrantBankTransactionReviewStatus {
+  UNREVIEWED
+  NEEDS_REVIEW
+  REVIEWED
+}
+
+enum GrantBankIssueSeverity {
+  INFO
+  WARNING
+  BLOCKING
+}
+
 enum FundingOrganisationUserRole {
   MEMBER
   REVIEWER
@@ -592,6 +648,12 @@ model User {
   grantReportCertifications     GrantReportCertification[]     @relation("GrantReportCertificationsConfirmedBy")
   grantExpenseAllocations       GrantExpenseAllocation[]       @relation("GrantExpenseAllocationsByUser")
   grantExpenseReversals         GrantExpenseAllocation[]       @relation("GrantExpenseAllocationReversals")
+  grantBankImportsCreated       GrantBankImportBatch[]         @relation("GrantBankImportsCreatedBy")
+  grantBankImportsConfirmed     GrantBankImportBatch[]         @relation("GrantBankImportsConfirmedBy")
+  grantBankImportsArchived      GrantBankImportBatch[]         @relation("GrantBankImportsArchivedBy")
+  grantBankTransactionsReviewed GrantBankTransaction[]         @relation("GrantBankTransactionsReviewedBy")
+  grantBankIssuesResolved       GrantBankImportIssue[]         @relation("GrantBankIssuesResolvedBy")
+  grantBankSourcesApplied       GrantReportBankTransactionSource[] @relation("GrantBankSourcesAppliedBy")
 
   @@index([email])
   @@index([role, status])
@@ -729,6 +791,7 @@ model EcdCentre {
   intelligenceBudgetDrafts    IntelligenceBudgetDraft[]
   invitations                 Invitation[]
   staffAssignments            EcdlinkStaffCentreAssignment[]
+  grantBankImportBatches      GrantBankImportBatch[]
   grantAwards                 GrantAward[]
 
   @@index([slug])
@@ -2059,6 +2122,7 @@ model GrantAward {
   obligations             GrantReportingObligation[]
   reports                 GrantReport[]
   expenseAllocations      GrantExpenseAllocation[]
+  bankImportBatches       GrantBankImportBatch[]
 
   @@index([centreId, status])
   @@index([fundingProjectId, status])
@@ -2207,6 +2271,7 @@ model GrantReport {
   createdBy            User                     @relation("GrantReportsCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
   archivedBy           User?                    @relation("GrantReportsArchivedBy", fields: [archivedByUserId], references: [id], onDelete: Restrict)
   versions             GrantReportVersion[]
+  originatingBankImports GrantBankImportBatch[] @relation("GrantBankImportOriginReport")
 
   @@index([grantAwardId, status, updatedAt])
   @@index([status, createdAt])
@@ -2274,6 +2339,7 @@ model GrantReportVersion {
   racialProfileRows           GrantReportRacialProfileRow[]
   sustainabilityItems         GrantReportSustainabilityItem[]
   certifications              GrantReportCertification[]
+  bankTransactionSources      GrantReportBankTransactionSource[]
 
   @@unique([grantReportId, versionNumber])
   @@index([grantReportId, status])
@@ -2305,6 +2371,7 @@ model GrantReportFinancialLine {
   version              GrantReportVersion        @relation(fields: [grantReportVersionId], references: [id], onDelete: Cascade)
   documents            GrantReportDocument[]
   expenseEntries       GrantReportExpenseEntry[]
+  bankTransactionSources GrantReportBankTransactionSource[]
 
   @@index([grantReportVersionId, lineType, displayOrder])
   @@index([categoryCode])
@@ -2501,6 +2568,191 @@ model GrantReportExpenseEntry {
   @@index([grantExpenseAllocationId])
 }
 
+model GrantBankImportBatch {
+  id                       String                @id @default(cuid())
+  grantAwardId             String
+  centreId                 String
+  originatingGrantReportId String
+  financialYear            String
+  quarter                  Int
+  reportingPeriodStart     DateTime              @db.Date
+  reportingPeriodEnd       DateTime              @db.Date
+  currency                 String                @default("ZAR")
+  status                   GrantBankImportStatus @default(UPLOADING)
+  safeFailureCode          String?
+  safeFailureSummary       String?
+  createdByUserId          String
+  confirmedByUserId        String?
+  confirmedAt              DateTime?
+  archivedByUserId         String?
+  archivedAt               DateTime?
+  createdAt                DateTime              @default(now())
+  updatedAt                DateTime              @updatedAt
+  award                    GrantAward            @relation(fields: [grantAwardId], references: [id], onDelete: Restrict, map: "GrantBankImportBatch_award_fkey")
+  centre                   EcdCentre             @relation(fields: [centreId], references: [id], onDelete: Restrict, map: "GrantBankImportBatch_centre_fkey")
+  originatingReport        GrantReport           @relation("GrantBankImportOriginReport", fields: [originatingGrantReportId], references: [id], onDelete: Restrict, map: "GrantBankImportBatch_report_fkey")
+  createdBy                User                  @relation("GrantBankImportsCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict, map: "GrantBankImportBatch_creator_fkey")
+  confirmedBy              User?                 @relation("GrantBankImportsConfirmedBy", fields: [confirmedByUserId], references: [id], onDelete: Restrict, map: "GrantBankImportBatch_confirmer_fkey")
+  archivedBy               User?                 @relation("GrantBankImportsArchivedBy", fields: [archivedByUserId], references: [id], onDelete: Restrict, map: "GrantBankImportBatch_archiver_fkey")
+  statements               GrantBankStatement[]
+  transactions             GrantBankTransaction[]
+  issues                   GrantBankImportIssue[]
+  processingAttempts       GrantBankProcessingAttempt[]
+
+  @@index([grantAwardId, financialYear, quarter, status], map: "GrantBankImport_award_period_status_idx")
+  @@index([centreId, status], map: "GrantBankImport_centre_status_idx")
+  @@index([originatingGrantReportId, status], map: "GrantBankImport_report_status_idx")
+}
+
+model GrantBankStatement {
+  id                    String                   @id @default(cuid())
+  batchId               String
+  fileAssetId           String                   @unique(map: "GrantBankStatement_file_key")
+  bankName              String?
+  accountHolderName     String?
+  maskedAccountReference String?
+  accountFingerprint    String?
+  statementNumber       String?
+  statementMonth        DateTime?                @db.Date
+  periodStart           DateTime?                @db.Date
+  periodEnd             DateTime?                @db.Date
+  statementDate         DateTime?                @db.Date
+  openingBalance        Decimal?                 @db.Decimal(14, 2)
+  closingBalance        Decimal?                 @db.Decimal(14, 2)
+  serviceFees           Decimal?                 @db.Decimal(14, 2)
+  otherBankCharges      Decimal?                 @db.Decimal(14, 2)
+  currency              String?
+  extractionStatus      GrantBankStatementStatus @default(PENDING)
+  extractionConfidence  Decimal?                 @db.Decimal(5, 4)
+  extractionStartedAt   DateTime?
+  extractionCompletedAt DateTime?
+  createdAt             DateTime                 @default(now())
+  updatedAt             DateTime                 @updatedAt
+  batch                 GrantBankImportBatch     @relation(fields: [batchId], references: [id], onDelete: Restrict, map: "GrantBankStatement_batch_fkey")
+  file                  FileAsset                @relation("GrantBankStatementFile", fields: [fileAssetId], references: [id], onDelete: Restrict, map: "GrantBankStatement_file_fkey")
+  transactions          GrantBankTransaction[]
+  issues                GrantBankImportIssue[]   @relation("GrantBankIssueStatement")
+  relatedIssues         GrantBankImportIssue[]   @relation("GrantBankIssueRelatedStatement")
+  processingAttempts    GrantBankProcessingAttempt[]
+
+  @@index([batchId, periodStart, periodEnd], map: "GrantBankStatement_batch_period_idx")
+  @@index([batchId, extractionStatus], map: "GrantBankStatement_batch_status_idx")
+}
+
+model GrantBankTransaction {
+  id                              String                           @id @default(cuid())
+  batchId                         String
+  statementId                     String
+  transactionDate                 DateTime                         @db.Date
+  originalDescription             String
+  originalAmount                  Decimal                          @db.Decimal(14, 2)
+  direction                       GrantBankTransactionDirection
+  runningBalance                  Decimal?                         @db.Decimal(14, 2)
+  bankCharge                      Decimal?                         @db.Decimal(14, 2)
+  sourcePage                      Int?
+  sourceRow                       Int?
+  sourceReference                 String?
+  extractionConfidence            Decimal?                         @db.Decimal(5, 4)
+  transactionFingerprint          String
+  suggestedType                   GrantBankTransactionType?
+  suggestedCategory               String?
+  suggestedConfidence             Decimal?                         @db.Decimal(5, 4)
+  confirmedType                   GrantBankTransactionType?
+  confirmedCategory               String?
+  correctedDescription            String?
+  reviewStatus                    GrantBankTransactionReviewStatus @default(UNREVIEWED)
+  notes                           String?
+  excludedFromReporting           Boolean                          @default(false)
+  exclusionReason                 String?
+  suspectedDuplicateOfTransactionId String?
+  reviewedByUserId                String?
+  reviewedAt                      DateTime?
+  createdAt                       DateTime                         @default(now())
+  updatedAt                       DateTime                         @updatedAt
+  batch                           GrantBankImportBatch             @relation(fields: [batchId], references: [id], onDelete: Restrict, map: "GrantBankTransaction_batch_fkey")
+  statement                       GrantBankStatement               @relation(fields: [statementId], references: [id], onDelete: Restrict, map: "GrantBankTransaction_statement_fkey")
+  suspectedDuplicateOf            GrantBankTransaction?            @relation("GrantBankTransactionDuplicates", fields: [suspectedDuplicateOfTransactionId], references: [id], onDelete: Restrict, map: "GrantBankTransaction_duplicate_fkey")
+  suspectedDuplicates             GrantBankTransaction[]           @relation("GrantBankTransactionDuplicates")
+  reviewedBy                      User?                            @relation("GrantBankTransactionsReviewedBy", fields: [reviewedByUserId], references: [id], onDelete: Restrict, map: "GrantBankTransaction_reviewer_fkey")
+  issues                          GrantBankImportIssue[]
+  reportSources                   GrantReportBankTransactionSource[]
+
+  @@index([batchId, reviewStatus], map: "GrantBankTransaction_batch_review_idx")
+  @@index([batchId, transactionDate], map: "GrantBankTransaction_batch_date_idx")
+  @@index([statementId, transactionDate], map: "GrantBankTransaction_statement_date_idx")
+  @@index([transactionFingerprint], map: "GrantBankTransaction_fingerprint_idx")
+  @@index([suspectedDuplicateOfTransactionId], map: "GrantBankTransaction_duplicate_idx")
+}
+
+model GrantBankImportIssue {
+  id                 String                 @id @default(cuid())
+  batchId            String
+  statementId        String?
+  relatedStatementId String?
+  transactionId      String?
+  severity           GrantBankIssueSeverity
+  issueCode          String
+  message            String
+  resolved           Boolean                @default(false)
+  resolvedByUserId   String?
+  resolvedAt         DateTime?
+  resolutionNote     String?
+  createdAt          DateTime               @default(now())
+  updatedAt          DateTime               @updatedAt
+  batch              GrantBankImportBatch   @relation(fields: [batchId], references: [id], onDelete: Restrict, map: "GrantBankImportIssue_batch_fkey")
+  statement          GrantBankStatement?    @relation("GrantBankIssueStatement", fields: [statementId], references: [id], onDelete: Restrict, map: "GrantBankImportIssue_statement_fkey")
+  relatedStatement   GrantBankStatement?    @relation("GrantBankIssueRelatedStatement", fields: [relatedStatementId], references: [id], onDelete: Restrict, map: "GrantBankImportIssue_related_statement_fkey")
+  transaction        GrantBankTransaction?  @relation(fields: [transactionId], references: [id], onDelete: Restrict, map: "GrantBankImportIssue_transaction_fkey")
+  resolvedBy         User?                  @relation("GrantBankIssuesResolvedBy", fields: [resolvedByUserId], references: [id], onDelete: Restrict, map: "GrantBankImportIssue_resolver_fkey")
+
+  @@index([batchId, resolved, severity], map: "GrantBankImportIssue_unresolved_idx")
+  @@index([statementId], map: "GrantBankImportIssue_statement_idx")
+  @@index([relatedStatementId], map: "GrantBankImportIssue_related_statement_idx")
+  @@index([transactionId], map: "GrantBankImportIssue_transaction_idx")
+}
+
+model GrantBankProcessingAttempt {
+  id                 String                    @id @default(cuid())
+  batchId            String
+  statementId        String?
+  kind               GrantBankProcessingKind
+  providerName       String?
+  providerVersion    String?
+  attemptNumber      Int
+  status             GrantBankProcessingStatus @default(PENDING)
+  safeFailureCode    String?
+  safeFailureSummary String?
+  startedAt          DateTime
+  completedAt        DateTime?
+  createdAt          DateTime                  @default(now())
+  batch              GrantBankImportBatch      @relation(fields: [batchId], references: [id], onDelete: Restrict, map: "GrantBankProcessingAttempt_batch_fkey")
+  statement          GrantBankStatement?       @relation(fields: [statementId], references: [id], onDelete: Restrict, map: "GrantBankProcessingAttempt_statement_fkey")
+
+  @@index([batchId, kind, status], map: "GrantBankProcessing_batch_kind_status_idx")
+  @@index([statementId, kind, attemptNumber], map: "GrantBankProcessing_statement_attempt_idx")
+}
+
+model GrantReportBankTransactionSource {
+  id                         String                   @id @default(cuid())
+  grantReportVersionId       String
+  grantReportFinancialLineId String
+  grantBankTransactionId     String
+  appliedAmount              Decimal                  @db.Decimal(14, 2)
+  transactionTypeSnapshot    GrantBankTransactionType
+  categorySnapshot           String
+  descriptionSnapshot        String
+  appliedByUserId            String
+  appliedAt                  DateTime                 @default(now())
+  version                    GrantReportVersion       @relation(fields: [grantReportVersionId], references: [id], onDelete: Restrict, map: "GrantReportBankSource_version_fkey")
+  financialLine              GrantReportFinancialLine @relation(fields: [grantReportFinancialLineId], references: [id], onDelete: Restrict, map: "GrantReportBankSource_line_fkey")
+  transaction                GrantBankTransaction     @relation(fields: [grantBankTransactionId], references: [id], onDelete: Restrict, map: "GrantReportBankSource_transaction_fkey")
+  appliedBy                  User                     @relation("GrantBankSourcesAppliedBy", fields: [appliedByUserId], references: [id], onDelete: Restrict, map: "GrantReportBankSource_actor_fkey")
+
+  @@unique([grantReportVersionId, grantBankTransactionId], map: "GrantReportBankSource_version_transaction_key")
+  @@index([grantReportFinancialLineId], map: "GrantReportBankSource_line_idx")
+  @@index([grantBankTransactionId], map: "GrantReportBankSource_transaction_idx")
+}
+
 model Notification {
   id              String             @id @default(cuid())
   userId          String?
@@ -2613,6 +2865,7 @@ model FileAsset {
   grantDisbursementEvidence  GrantDisbursement[]         @relation("GrantDisbursementEvidence")
   grantReportDocuments       GrantReportDocument[]       @relation("GrantReportDocuments")
   grantAwardSignedAgreement  GrantAward?                 @relation("GrantAwardSignedAgreement")
+  grantBankStatement         GrantBankStatement?         @relation("GrantBankStatementFile")
 }
 
 model IntelligenceQuery {
