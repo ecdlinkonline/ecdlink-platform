@@ -32,6 +32,11 @@ test("cash flow operating totals and remaining cash use integer cents", () => {
   assert.ok(dbeQuarterlyCashFlowExpenseCategories.includes("Other Operating Expenses"));
 });
 
+test("cash flow row variance is budget minus expenditure for under- and over-spending", () => {
+  assert.equal(subtractGrantAmounts("1000.00", "800.00"), "200.00");
+  assert.equal(subtractGrantAmounts("1000.00", "1200.00"), "-200.00");
+});
+
 test("cash flow completeness requires variance reasons and certification", () => {
   const complete = { financialYear: "2026", quarter: 1, reportingPeriodStart: "2026-01-01", reportingPeriodEnd: "2026-03-31", cashReceivedLineCount: 2, operatingExpenseLineCount: 14, unresolvedVarianceCount: 0, certificationCount: 2, confirmedCertificationCount: 2 };
   assert.equal(quarterlyCashFlowCompletion(complete).readyForSubmission, true);
