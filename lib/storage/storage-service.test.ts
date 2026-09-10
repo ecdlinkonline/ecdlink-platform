@@ -13,6 +13,7 @@ function mocks(options: { persistenceFails?: boolean } = {}) {
   const removed: string[] = [];
   const provider: StorageProviderAdapter = {
     upload: async (input) => ({ provider: "supabase", path: input.path, contentType: input.contentType, size: input.content.byteLength }),
+    read: async () => Uint8Array.from([1, 2, 3, 4, 5, 6]),
     createSignedUrl: async ({ path }) => `https://signed.example/${path}`,
     exists: async () => true,
     removeForRollback: async (path) => { removed.push(path); },
@@ -57,4 +58,15 @@ test("signed preview access uses the configured five-minute default", async () =
   const access = await service.createPreviewAccess({ fileAssetId: "asset-1", context: { actorUserId: "user-1", module: "funding", entityId: "document-1" } });
   assert.equal(expiresInSeconds, 300);
   assert.equal(access.previewable, true);
+});
+
+test("private processing reads bytes without creating a signed public access URL", async () => {
+  const { provider, persistence } = mocks();
+  let signed = false;
+  provider.createSignedUrl = async () => { signed = true; return "unused"; };
+  const service = new StorageService(provider, persistence, { signedUrlTtlSeconds: 300 });
+  const file = await service.readFileForProcessing("asset-1");
+  assert.equal(file.content.byteLength, 6);
+  assert.equal(file.mimeType, "application/pdf");
+  assert.equal(signed, false);
 });

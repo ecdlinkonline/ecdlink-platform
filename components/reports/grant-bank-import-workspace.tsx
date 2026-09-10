@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRef, useState } from "react";
-import { ArrowLeft, Download, Eye, FileUp, Landmark, Pencil, Trash2 } from "lucide-react";
+import { ArrowLeft, Download, Eye, FileUp, Landmark, Pencil, ScanText, Trash2 } from "lucide-react";
 import { BreadcrumbLabel } from "@/components/app-shell/breadcrumb-label";
 import { PageHeader, StatusBadge, useToast } from "@/components/design-system";
 import { Button } from "@/components/ui/button";
@@ -83,6 +83,19 @@ export function GrantBankImportWorkspace({ initialData }: { initialData: GrantBa
     } finally { setBusy(null); }
   }
 
+  async function extract(statementId: string) {
+    setBusy(statementId);
+    try {
+      const response = await fetch(`/api/grant-reports/${data.reportId}/bank-import/${data.id}/statements/${statementId}/extract`, { method: "POST" });
+      const result = await response.json();
+      if (!response.ok || !result.ok) throw new Error(result.error ?? "The bank statement could not be extracted.");
+      setData(result.data);
+      pushToast({ title: "Extraction complete", description: "Review the transaction preview and extraction status below." });
+    } catch (error) {
+      pushToast({ title: "Extraction failed", description: error instanceof Error ? error.message : "The bank statement could not be extracted." });
+    } finally { setBusy(null); }
+  }
+
   return <div className="space-y-6 pb-10">
     <BreadcrumbLabel label="Bank Statement Import" />
     <PageHeader eyebrow="Super Admin · Grant Reports" title="Bank Statement Import" description={`Upload the three monthly statements for Q${data.quarter} ${data.financialYear}. Files remain private and no report values are changed automatically.`} actions={<Link href={`/dashboard/super-admin/reports/${data.reportId}`}><Button variant="secondary"><ArrowLeft className="h-4 w-4" />Back to Report</Button></Link>} />
@@ -98,15 +111,16 @@ export function GrantBankImportWorkspace({ initialData }: { initialData: GrantBa
 
     <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm text-brand-navy"><strong>Manual reporting remains available.</strong> These files are stored for later extraction and review. Phase 1 does not read transactions, calculate totals, or change the {reportTypeLabels[data.reportType]} report.</div>
 
-    <div className="grid gap-5 xl:grid-cols-3">{slots.map((slot) => <StatementCard key={slot.index} slot={slot} data={data} busy={busy} editing={editing} confirmRemove={confirmRemove} setEditing={setEditing} setConfirmRemove={setConfirmRemove} onUpload={upload} onSave={saveMetadata} onRemove={remove} />)}</div>
+    <div className="grid gap-5 xl:grid-cols-3">{slots.map((slot) => <StatementCard key={slot.index} slot={slot} data={data} busy={busy} editing={editing} confirmRemove={confirmRemove} setEditing={setEditing} setConfirmRemove={setConfirmRemove} onUpload={upload} onSave={saveMetadata} onRemove={remove} onExtract={extract} />)}</div>
+    {data.statements.some((statement) => statement.extractionState !== "PENDING") ? <Card className="dark:border-slate-800 dark:bg-slate-900"><CardHeader><CardTitle>Extracted Transactions</CardTitle><CardDescription>Text-based PDF transactions are shown exactly as extracted. Categorisation and duplicate review are handled in the next phase.</CardDescription></CardHeader><CardContent className="space-y-6">{data.statements.filter((statement) => statement.extractionState !== "PENDING").map((statement) => <TransactionPreview key={statement.id} statement={statement} currency={statement.currency ?? data.currency} />)}</CardContent></Card> : null}
   </div>;
 }
 
-function StatementCard({ slot, data, busy, editing, confirmRemove, setEditing, setConfirmRemove, onUpload, onSave, onRemove }: {
+function StatementCard({ slot, data, busy, editing, confirmRemove, setEditing, setConfirmRemove, onUpload, onSave, onRemove, onExtract }: {
   slot: ReturnType<typeof assignStatementSlots>[number]; data: GrantBankImportWorkspaceDto; busy: string | null; editing: string | null; confirmRemove: string | null;
   setEditing: (id: string | null) => void; setConfirmRemove: (id: string | null) => void;
   onUpload: (slot: ReturnType<typeof assignStatementSlots>[number], file: File, replaceStatementId?: string) => Promise<void>;
-  onSave: (statementId: string, form: FormData) => Promise<void>; onRemove: (statementId: string) => Promise<void>;
+  onSave: (statementId: string, form: FormData) => Promise<void>; onRemove: (statementId: string) => Promise<void>; onExtract: (statementId: string) => Promise<void>;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const statement = slot.statement;
@@ -117,7 +131,8 @@ function StatementCard({ slot, data, busy, editing, confirmRemove, setEditing, s
       {statement ? <>
         <div className="rounded-lg bg-slate-50 p-3 dark:bg-slate-800"><p className="break-all text-sm font-bold text-brand-ink dark:text-white">{statement.originalFilename}</p><p className="mt-1 text-xs text-slate-500">{fileSize(statement.fileSize)} · Stored privately</p></div>
         {editing === statement.id ? <MetadataForm statement={statement} expectedMonth={slot.expected.value} disabled={isBusy} onCancel={() => setEditing(null)} onSave={(form) => onSave(statement.id, form)} /> : <div className="grid grid-cols-2 gap-3 text-sm"><Detail label="Statement Month" value={displayDate(statement.statementMonth)} /><Detail label="Period" value={statement.periodStart || statement.periodEnd ? `${displayDate(statement.periodStart)} – ${displayDate(statement.periodEnd)}` : "Not provided"} /><Detail label="Opening Balance" value={statement.openingBalance ? formatGrantCurrency(Number(statement.openingBalance), statement.currency ?? data.currency) : "Not provided"} /><Detail label="Closing Balance" value={statement.closingBalance ? formatGrantCurrency(Number(statement.closingBalance), statement.currency ?? data.currency) : "Not provided"} /></div>}
-        <div className="mt-auto flex flex-wrap gap-2"><a className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-brand-line px-3 text-sm font-bold text-brand-navy" href={`/api/grant-reports/${data.reportId}/bank-import/${data.id}/statements/${statement.id}/file?preview=1`} target="_blank" rel="noreferrer"><Eye className="h-4 w-4" />Preview</a><a className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-brand-line px-3 text-sm font-bold text-brand-navy" href={`/api/grant-reports/${data.reportId}/bank-import/${data.id}/statements/${statement.id}/file?download=1`}><Download className="h-4 w-4" />Download</a>{data.editable ? <><Button type="button" variant="ghost" disabled={isBusy} onClick={() => setEditing(editing === statement.id ? null : statement.id)}><Pencil className="h-4 w-4" />Edit Details</Button><Button type="button" variant="ghost" disabled={isBusy} onClick={() => inputRef.current?.click()}><FileUp className="h-4 w-4" />Replace</Button>{confirmRemove === statement.id ? <div className="flex items-center gap-2 rounded-lg bg-red-50 p-2 text-xs font-bold text-red-800"><span>Remove this statement?</span><button type="button" disabled={isBusy} className="underline" onClick={() => void onRemove(statement.id)}>Remove</button><button type="button" className="underline" onClick={() => setConfirmRemove(null)}>Cancel</button></div> : <Button type="button" variant="ghost" disabled={isBusy} onClick={() => setConfirmRemove(statement.id)}><Trash2 className="h-4 w-4" />Remove</Button>}</> : null}</div>
+        <ExtractionState statement={statement} processing={isBusy} />
+        <div className="mt-auto flex flex-wrap gap-2"><a className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-brand-line px-3 text-sm font-bold text-brand-navy" href={`/api/grant-reports/${data.reportId}/bank-import/${data.id}/statements/${statement.id}/file?preview=1`} target="_blank" rel="noreferrer"><Eye className="h-4 w-4" />Preview</a><a className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-brand-line px-3 text-sm font-bold text-brand-navy" href={`/api/grant-reports/${data.reportId}/bank-import/${data.id}/statements/${statement.id}/file?download=1`}><Download className="h-4 w-4" />Download</a>{data.editable && ["PENDING", "FAILED"].includes(statement.extractionState) ? <Button type="button" variant="secondary" disabled={isBusy} onClick={() => void onExtract(statement.id)}><ScanText className="h-4 w-4" />{isBusy ? "Extracting…" : "Extract Transactions"}</Button> : null}{data.editable ? <><Button type="button" variant="ghost" disabled={isBusy || statement.extractionState !== "PENDING"} onClick={() => setEditing(editing === statement.id ? null : statement.id)}><Pencil className="h-4 w-4" />Edit Details</Button><Button type="button" variant="ghost" disabled={isBusy || statement.extractionState !== "PENDING"} onClick={() => inputRef.current?.click()}><FileUp className="h-4 w-4" />Replace</Button>{confirmRemove === statement.id ? <div className="flex items-center gap-2 rounded-lg bg-red-50 p-2 text-xs font-bold text-red-800"><span>Remove this statement?</span><button type="button" disabled={isBusy} className="underline" onClick={() => void onRemove(statement.id)}>Remove</button><button type="button" className="underline" onClick={() => setConfirmRemove(null)}>Cancel</button></div> : <Button type="button" variant="ghost" disabled={isBusy || statement.extractionState !== "PENDING"} onClick={() => setConfirmRemove(statement.id)}><Trash2 className="h-4 w-4" />Remove</Button>}</> : null}</div>
       </> : <div className="flex flex-1 flex-col items-center justify-center rounded-lg border border-dashed border-brand-line p-8 text-center"><Landmark className="h-8 w-8 text-slate-400" /><p className="mt-3 font-bold">No statement uploaded</p><p className="mt-1 text-sm text-slate-500">PDF, PNG, JPG or JPEG. Maximum 10 MB.</p>{data.editable ? <Button type="button" className="mt-4" disabled={isBusy} onClick={() => inputRef.current?.click()}><FileUp className="h-4 w-4" />{isBusy ? "Uploading…" : "Upload Statement"}</Button> : null}</div>}
       <input ref={inputRef} className="sr-only" type="file" accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg" aria-label={`${statement ? "Replace" : "Upload"} statement ${slot.index + 1}`} disabled={!data.editable || isBusy} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void onUpload(slot, file, statement?.id); }} />
     </CardContent>
@@ -131,3 +146,12 @@ function MetadataForm({ statement, expectedMonth, disabled, onCancel, onSave }: 
 function Input(props: React.InputHTMLAttributes<HTMLInputElement> & { label: string }) { const { label, ...input } = props; return <label className="text-xs font-bold text-slate-600 dark:text-slate-300">{label}<input className={inputClass} {...input} /></label>; }
 function Detail({ label, value }: { label: string; value: string }) { return <div><p className="text-xs font-bold uppercase text-slate-500">{label}</p><p className="mt-1 font-semibold">{value}</p></div>; }
 function Summary({ label, value }: { label: string; value: string }) { return <div><p className="text-xs font-bold uppercase tracking-wide text-slate-500">{label}</p><p className="mt-1 text-sm font-semibold text-brand-ink dark:text-white">{value}</p></div>; }
+
+function ExtractionState({ statement, processing }: { statement: GrantBankStatementDto; processing: boolean }) {
+  const label = processing || statement.extractionState === "PROCESSING" ? "Processing" : statement.extractionState === "READY_FOR_CATEGORISATION" ? "Ready for categorisation" : statement.extractionState === "OCR_REQUIRED" ? "PDF or image requires OCR" : statement.extractionState === "NO_TRANSACTIONS" ? "No transactions detected" : statement.extractionState === "FAILED" ? "Extraction failed" : "Awaiting extraction";
+  return <div className="rounded-lg border border-brand-line p-3 text-sm dark:border-slate-700"><div className="flex items-center justify-between gap-2"><span className="font-bold">{label}</span>{statement.transactionsFound > 0 ? <span className="text-xs font-semibold text-slate-500">{statement.transactionsFound} found</span> : null}</div>{statement.extractionMessage ? <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">{statement.extractionMessage}</p> : null}</div>;
+}
+
+function TransactionPreview({ statement, currency }: { statement: GrantBankStatementDto; currency: string }) {
+  return <section className="space-y-3"><div><h3 className="font-bold text-brand-ink dark:text-white">{statement.originalFilename}</h3><p className="text-sm text-slate-500">{statement.extractionMessage ?? `${statement.transactionsFound} transactions found.`}</p></div>{statement.transactions.length > 0 ? <div className="overflow-x-auto"><table className="min-w-[760px] w-full text-left text-sm"><thead><tr className="border-b border-brand-line text-xs uppercase tracking-wide text-slate-500"><th className="px-3 py-2">Date</th><th className="px-3 py-2">Description</th><th className="px-3 py-2 text-right">Debit</th><th className="px-3 py-2 text-right">Credit</th><th className="px-3 py-2 text-right">Balance</th></tr></thead><tbody>{statement.transactions.map((transaction) => <tr key={transaction.id} className="border-b border-brand-line/70 dark:border-slate-800"><td className="whitespace-nowrap px-3 py-2">{displayDate(transaction.transactionDate)}</td><td className="px-3 py-2 font-medium">{transaction.description}</td><td className="whitespace-nowrap px-3 py-2 text-right">{transaction.debit ? formatGrantCurrency(Number(transaction.debit), currency) : "—"}</td><td className="whitespace-nowrap px-3 py-2 text-right">{transaction.credit ? formatGrantCurrency(Number(transaction.credit), currency) : "—"}</td><td className="whitespace-nowrap px-3 py-2 text-right">{transaction.balance ? formatGrantCurrency(Number(transaction.balance), currency) : "—"}</td></tr>)}</tbody></table></div> : <div className="rounded-lg bg-slate-50 p-4 text-sm text-slate-600 dark:bg-slate-800 dark:text-slate-300">{statement.extractionState === "PROCESSING" ? "Processing the private statement…" : statement.extractionMessage ?? "No transactions are available."}</div>}</section>;
+}

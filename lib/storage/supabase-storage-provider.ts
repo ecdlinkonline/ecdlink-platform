@@ -99,6 +99,12 @@ export class SupabaseStorageProvider implements StorageProviderAdapter {
     return uploadSupabaseObject(this.client.storage.from(this.config.bucket), input);
   }
 
+  async read(path: string) {
+    const { data, error } = await this.client.storage.from(this.config.bucket).download(path);
+    if (error || !data) throw new StorageAccessError("The private file could not be read for processing.", 502, { cause: error });
+    return new Uint8Array(await data.arrayBuffer());
+  }
+
   async createSignedUrl(input: { path: string; expiresInSeconds: number; downloadFilename?: string }) {
     const { data, error } = await this.client.storage.from(this.config.bucket).createSignedUrl(
       input.path,

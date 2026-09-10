@@ -24,7 +24,7 @@ test("signed agreement validation accepts PDF and rejects non-PDF and oversized 
 test("staged rollback rejects a different uploader before deleting metadata or storage", async () => {
   let deleted = false;
   let removed = false;
-  const provider: StorageProviderAdapter = { upload: async () => { throw new Error("unused"); }, createSignedUrl: async () => "unused", exists: async () => true, removeForRollback: async () => { removed = true; } };
+  const provider: StorageProviderAdapter = { upload: async () => { throw new Error("unused"); }, read: async () => new Uint8Array(), createSignedUrl: async () => "unused", exists: async () => true, removeForRollback: async () => { removed = true; } };
   const persistence: StoragePersistence = {
     createFileAsset: async () => { throw new Error("unused"); },
     findFileAsset: async (id) => ({ id, storageProvider:"supabase",storageKey:`funding/owner/grant-award-staging/${id}/award.pdf`,originalFilename:"award.pdf",mimeType:"application/pdf",fileSize:6,checksum:"hash",uploadedByUserId:"owner",createdAt:new Date(0) }),
@@ -39,7 +39,7 @@ test("staged rollback rejects a different uploader before deleting metadata or s
 
 test("valid staged rollback removes metadata before invoking provider rollback", async () => {
   const events: string[]=[];
-  const provider: StorageProviderAdapter = { upload:async()=>{throw new Error("unused");},createSignedUrl:async()=>"unused",exists:async()=>true,removeForRollback:async()=>{events.push("storage");} };
+  const provider: StorageProviderAdapter = { upload:async()=>{throw new Error("unused");},read:async()=>new Uint8Array(),createSignedUrl:async()=>"unused",exists:async()=>true,removeForRollback:async()=>{events.push("storage");} };
   const record={id:"asset-1",storageProvider:"supabase",storageKey:"funding/owner/grant-award-staging/asset-1/award.pdf",originalFilename:"award.pdf",mimeType:"application/pdf",fileSize:6,checksum:"hash",uploadedByUserId:"owner",createdAt:new Date(0)};
   const persistence: StoragePersistence={createFileAsset:async()=>{throw new Error("unused");},findFileAsset:async()=>record,deleteFileAssetForRollback:async()=>{events.push("metadata");return record;},recordAccess:async()=>undefined};
   await new StorageService(provider,persistence,{signedUrlTtlSeconds:300}).rollbackStagedFileAsset({fileAssetId:"asset-1",uploadedByUserId:"owner",module:"funding",ownerId:"owner",entityId:"grant-award-staging"});

@@ -54,3 +54,10 @@ export type SignedFileAccess = {
   mimeType: string;
   previewable: boolean;
 };
+
+export type PrivateFileContent = {
+  content: Uint8Array;
+  originalFilename: string;
+  mimeType: string;
+  fileSize: number;
+};

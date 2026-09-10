@@ -51,6 +51,17 @@ export type GrantBankStatementDto = {
   openingBalance: string | null;
   closingBalance: string | null;
   currency: string | null;
+  extractionState: "PENDING" | "PROCESSING" | "READY_FOR_CATEGORISATION" | "NO_TRANSACTIONS" | "OCR_REQUIRED" | "FAILED";
+  extractionMessage: string | null;
+  transactionsFound: number;
+  transactions: Array<{
+    id: string;
+    transactionDate: string;
+    description: string;
+    debit: string | null;
+    credit: string | null;
+    balance: string | null;
+  }>;
 };
 
 export type GrantBankImportWorkspaceDto = {

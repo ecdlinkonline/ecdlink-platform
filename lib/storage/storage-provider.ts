@@ -2,6 +2,7 @@ import type { StoredObject, UploadStorageInput } from "@/lib/storage/types";
 
 export interface StorageProviderAdapter {
   upload(input: UploadStorageInput): Promise<StoredObject>;
+  read(path: string): Promise<Uint8Array>;
   createSignedUrl(input: { path: string; expiresInSeconds: number; downloadFilename?: string }): Promise<string>;
   exists(path: string): Promise<boolean>;
 

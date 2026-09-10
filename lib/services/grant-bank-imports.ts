@@ -3,7 +3,8 @@ import "server-only";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { assertGrantBankImportCapacity, expectedGrantBankStatementMonths, grantBankImportMatchesContext, isEditableGrantBankImportStatus, isGrantBankImportReportType, type GrantBankImportWorkspaceDto } from "@/lib/grant-reports/bank-import";
-import { findActiveSuperAdmin, findConfirmedGrantBankImport, findEditableGrantBankImport, findGrantBankImport, findGrantBankReportContext, grantBankImportInclude, type GrantBankImportRecord } from "@/lib/repositories/grant-bank-imports";
+import { bankStatementExtractor, BankStatementExtractionError, bankTransactionFingerprint } from "@/lib/grant-reports/bank-statement-extraction";
+import { findActiveSuperAdmin, findConfirmedGrantBankImport, findEditableGrantBankImport, findGrantBankImport, findGrantBankReportContext, findGrantBankStatementForAccess, grantBankImportIdentitySelect, type GrantBankImportRecord } from "@/lib/repositories/grant-bank-imports";
 import { storage } from "@/lib/storage/storage-service";
 import type { SignedFileAccess } from "@/lib/storage/types";
 import { defaultDocumentPolicy, type StorageUploadFile } from "@/lib/storage/validation";
@@ -67,6 +68,16 @@ function reportIsEditable(context: ReportContext) {
   return ["DRAFT", "RETURNED"].includes(context.status) && context.version.status === "DRAFT";
 }
 
+function extractionPresentation(statement: GrantBankImportRecord["statements"][number]) {
+  const attempt = statement.processingAttempts[0];
+  if (statement.extractionStatus === "EXTRACTING") return { state: "PROCESSING" as const, message: "Transaction extraction is in progress." };
+  if (attempt?.safeFailureCode === "ocr_required") return { state: "OCR_REQUIRED" as const, message: "This statement requires OCR processing, which is not configured yet." };
+  if (attempt?.safeFailureCode === "no_transactions_detected") return { state: "NO_TRANSACTIONS" as const, message: "No transaction rows were detected in the embedded PDF text." };
+  if (statement.extractionStatus === "FAILED") return { state: "FAILED" as const, message: attempt?.safeFailureSummary ?? "The statement could not be extracted." };
+  if (statement.extractionStatus === "EXTRACTED") return { state: "READY_FOR_CATEGORISATION" as const, message: "Transactions are ready for categorisation." };
+  return { state: "PENDING" as const, message: null };
+}
+
 function toWorkspaceDto(batch: GrantBankImportRecord, reportType: string, reportEditable = true): GrantBankImportWorkspaceDto {
   if (!isGrantBankImportReportType(reportType)) throw new GrantBankImportError("This report does not support bank statement import.", 422);
   const start = dateOnly(batch.reportingPeriodStart)!;
@@ -87,40 +98,54 @@ function toWorkspaceDto(batch: GrantBankImportRecord, reportType: string, report
     editable: reportEditable && isEditableGrantBankImportStatus(batch.status),
     statementsUploaded: batch.statements.length,
     expectedMonths: expectedGrantBankStatementMonths(start, end),
-    statements: batch.statements.map((statement) => ({
-      id: statement.id,
-      originalFilename: statement.file.originalFilename,
-      mimeType: statement.file.mimeType,
-      fileSize: statement.file.fileSize,
-      status: statement.extractionStatus,
-      statementMonth: dateOnly(statement.statementMonth),
-      periodStart: dateOnly(statement.periodStart),
-      periodEnd: dateOnly(statement.periodEnd),
-      statementDate: dateOnly(statement.statementDate),
-      bankName: statement.bankName,
-      accountHolderName: statement.accountHolderName,
-      maskedAccountReference: statement.maskedAccountReference,
-      openingBalance: statement.openingBalance?.toFixed(2) ?? null,
-      closingBalance: statement.closingBalance?.toFixed(2) ?? null,
-      currency: statement.currency,
-    })),
+    statements: batch.statements.map((statement) => {
+      const extraction = extractionPresentation(statement);
+      return {
+        id: statement.id,
+        originalFilename: statement.file.originalFilename,
+        mimeType: statement.file.mimeType,
+        fileSize: statement.file.fileSize,
+        status: statement.extractionStatus,
+        statementMonth: dateOnly(statement.statementMonth),
+        periodStart: dateOnly(statement.periodStart),
+        periodEnd: dateOnly(statement.periodEnd),
+        statementDate: dateOnly(statement.statementDate),
+        bankName: statement.bankName,
+        accountHolderName: statement.accountHolderName,
+        maskedAccountReference: statement.maskedAccountReference,
+        openingBalance: statement.openingBalance?.toFixed(2) ?? null,
+        closingBalance: statement.closingBalance?.toFixed(2) ?? null,
+        currency: statement.currency,
+        extractionState: extraction.state,
+        extractionMessage: extraction.message,
+        transactionsFound: statement.transactions.length,
+        transactions: statement.transactions.map((transaction) => ({
+          id: transaction.id,
+          transactionDate: dateOnly(transaction.transactionDate)!,
+          description: transaction.originalDescription,
+          debit: transaction.direction === "DEBIT" ? transaction.originalAmount.toFixed(2) : null,
+          credit: transaction.direction === "CREDIT" ? transaction.originalAmount.toFixed(2) : null,
+          balance: transaction.runningBalance?.toFixed(2) ?? null,
+        })),
+      };
+    }),
   };
 }
 
-export async function createOrResumeGrantBankImport(reportId: string, actorUserId: string) {
-  return prisma.$transaction(async (tx) => {
+export async function createOrResumeGrantBankImport(reportId: string, actorUserId: string, client: Pick<typeof prisma, "$transaction" | "grantBankImportBatch"> = prisma) {
+  const resolved = await client.$transaction(async (tx) => {
     const context = await requireActorAndContext(tx, actorUserId, reportId);
     const period = reportPeriod(context);
     const lookup = { reportId, awardId: context.award.id, financialYear: period.financialYear, quarter: period.quarter };
     const confirmed = await findConfirmedGrantBankImport(tx, lookup);
     if (confirmed) {
       assertGrantBankImportAlignment(confirmed, context);
-      return toWorkspaceDto(confirmed, context.version.reportType, reportIsEditable(context));
+      return { batchId: confirmed.id, reportType: context.version.reportType, reportEditable: reportIsEditable(context) };
     }
     const existing = await findEditableGrantBankImport(tx, lookup);
     if (existing) {
       assertGrantBankImportAlignment(existing, context);
-      return toWorkspaceDto(existing, context.version.reportType, reportIsEditable(context));
+      return { batchId: existing.id, reportType: context.version.reportType, reportEditable: reportIsEditable(context) };
     }
     assertGrantBankReportEligibility({ reportType: context.version.reportType, reportStatus: context.status, versionStatus: context.version.status }, true);
     const batch = await tx.grantBankImportBatch.create({
@@ -136,21 +161,24 @@ export async function createOrResumeGrantBankImport(reportId: string, actorUserI
         status: "UPLOADING",
         createdByUserId: actorUserId,
       },
-      include: grantBankImportInclude,
+      select: grantBankImportIdentitySelect,
     });
     await tx.auditLog.create({ data: { actorUserId, action: "grant.bank_import.created", entityType: "GrantBankImportBatch", entityId: batch.id, metadata: { reportId, grantAwardId: context.award.id, centreId: context.award.centreId, financialYear: period.financialYear, quarter: period.quarter } } });
-    return toWorkspaceDto(batch, context.version.reportType, reportIsEditable(context));
-  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    return { batchId: batch.id, reportType: context.version.reportType, reportEditable: reportIsEditable(context) };
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 15_000 });
+  // Hydration includes extraction rows and must not consume the mutation transaction's lifetime.
+  const batch = await findGrantBankImport(client, reportId, resolved.batchId);
+  if (!batch) throw new GrantBankImportError("The bank import could not be reloaded.", 500);
+  return toWorkspaceDto(batch, resolved.reportType, resolved.reportEditable);
 }
 
 export async function getGrantBankImportWorkspace(input: { reportId: string; importId: string; actorUserId: string }) {
-  return prisma.$transaction(async (tx) => {
-    const context = await requireActorAndContext(tx, input.actorUserId, input.reportId);
-    const batch = await findGrantBankImport(tx, input.reportId, input.importId);
-    if (!batch) throw new GrantBankImportError("Bank statement import not found.", 404);
-    assertGrantBankImportAlignment(batch, context);
-    return toWorkspaceDto(batch, context.version.reportType, reportIsEditable(context));
-  });
+  // This read-only workspace does not require an interactive transaction.
+  const context = await requireActorAndContext(prisma, input.actorUserId, input.reportId);
+  const batch = await findGrantBankImport(prisma, input.reportId, input.importId);
+  if (!batch) throw new GrantBankImportError("Bank statement import not found.", 404);
+  assertGrantBankImportAlignment(batch, context);
+  return toWorkspaceDto(batch, context.version.reportType, reportIsEditable(context));
 }
 
 function metadataData(metadata: GrantBankStatementMetadataInput) {
@@ -246,15 +274,11 @@ export async function removeGrantBankStatement(input: { reportId: string; import
 }
 
 async function loadStatementFile(input: { reportId: string; importId: string; statementId: string; actorUserId: string }) {
-  return prisma.$transaction(async (tx) => {
-    const context = await requireActorAndContext(tx, input.actorUserId, input.reportId);
-    const batch = await findGrantBankImport(tx, input.reportId, input.importId);
-    if (!batch) throw new GrantBankImportError("Bank statement import not found.", 404);
-    assertGrantBankImportAlignment(batch, context);
-    const statement = batch.statements.find((item) => item.id === input.statementId);
-    if (!statement) throw new GrantBankImportError("Bank statement not found.", 404);
-    return statement;
-  });
+  const context = await requireActorAndContext(prisma, input.actorUserId, input.reportId);
+  const statement = await findGrantBankStatementForAccess(prisma, input);
+  if (!statement) throw new GrantBankImportError("Bank statement not found.", 404);
+  assertGrantBankImportAlignment(statement.batch, context);
+  return statement;
 }
 
 export async function getGrantBankStatementFile(input: { reportId: string; importId: string; statementId: string; actorUserId: string; mode: "preview" | "download" }): Promise<SignedFileAccess> {
@@ -263,4 +287,103 @@ export async function getGrantBankStatementFile(input: { reportId: string; impor
   return input.mode === "preview"
     ? storage.createPreviewAccess({ fileAssetId: statement.fileAssetId, context })
     : storage.createDownloadAccess({ fileAssetId: statement.fileAssetId, context });
+}
+
+function extractionFailure(error: unknown) {
+  if (error instanceof BankStatementExtractionError) return { code: error.safeCode, summary: error.message };
+  return { code: "extraction_failed", summary: "The statement could not be extracted." };
+}
+
+export function canStartGrantBankStatementExtraction(input: {
+  extractionStatus: string;
+  transactionCount: number;
+  latestSafeFailureCode?: string | null;
+}) {
+  if (input.transactionCount > 0) return false;
+  if (["PENDING", "FAILED"].includes(input.extractionStatus)) return true;
+  return input.extractionStatus === "NEEDS_REVIEW" && input.latestSafeFailureCode === "no_transactions_detected";
+}
+
+export async function extractGrantBankStatement(input: { reportId: string; importId: string; statementId: string; actorUserId: string }) {
+  const started = await prisma.$transaction(async (tx) => {
+    const { batch } = await requireMutableBatch(tx, input);
+    const statement = batch.statements.find((item) => item.id === input.statementId);
+    if (!statement) throw new GrantBankImportError("Bank statement not found.", 404);
+    if (!canStartGrantBankStatementExtraction({
+      extractionStatus: statement.extractionStatus,
+      transactionCount: statement._count.transactions,
+      latestSafeFailureCode: statement.processingAttempts[0]?.safeFailureCode,
+    })) {
+      throw new GrantBankImportError("This statement cannot be extracted again.", 409);
+    }
+    const attemptNumber = await tx.grantBankProcessingAttempt.count({ where: { statementId: statement.id, kind: "EXTRACTION" } }) + 1;
+    const attempt = await tx.grantBankProcessingAttempt.create({
+      data: { batchId: batch.id, statementId: statement.id, kind: "EXTRACTION", providerName: "pending", providerVersion: "1", attemptNumber, status: "RUNNING", startedAt: new Date() },
+      select: { id: true },
+    });
+    await tx.grantBankStatement.update({ where: { id: statement.id }, data: { extractionStatus: "EXTRACTING", extractionStartedAt: new Date(), extractionCompletedAt: null } });
+    await tx.grantBankImportBatch.update({ where: { id: batch.id }, data: { status: "EXTRACTING", safeFailureCode: null, safeFailureSummary: null } });
+    await tx.auditLog.create({ data: { actorUserId: input.actorUserId, action: "grant.bank_statement.extraction.started", entityType: "GrantBankStatement", entityId: statement.id, metadata: { reportId: input.reportId, importId: input.importId, attemptNumber } } });
+    return { attemptId: attempt.id, fileAssetId: statement.fileAssetId, statementMonth: dateOnly(statement.statementMonth) };
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 15_000 });
+
+  try {
+    const file = await storage.readFileForProcessing(started.fileAssetId);
+    const result = await bankStatementExtractor.extract({ content: file.content, mimeType: file.mimeType, statementMonth: started.statementMonth });
+    const transactions = result.transactions.filter((transaction) => transaction.transactionDate !== null);
+    return await prisma.$transaction(async (tx) => {
+      const context = await requireActorAndContext(tx, input.actorUserId, input.reportId);
+      const batch = await findGrantBankImport(tx, input.reportId, input.importId);
+      if (!batch) throw new GrantBankImportError("Bank statement import not found.", 404);
+      assertGrantBankImportAlignment(batch, context);
+      const statement = batch.statements.find((item) => item.id === input.statementId);
+      if (!statement || statement.extractionStatus !== "EXTRACTING") throw new GrantBankImportError("The extraction state changed before it could be saved.", 409);
+      if (transactions.length > 0) {
+        await tx.grantBankTransaction.createMany({
+          data: transactions.map((transaction) => ({
+            batchId: batch.id,
+            statementId: statement.id,
+            transactionDate: new Date(`${transaction.transactionDate}T00:00:00.000Z`),
+            originalDescription: transaction.description,
+            originalAmount: transaction.amount,
+            direction: transaction.debit !== null ? "DEBIT" as const : "CREDIT" as const,
+            runningBalance: transaction.balance,
+            sourcePage: transaction.sourcePage,
+            sourceRow: transaction.sourceRow,
+            sourceReference: transaction.rawText,
+            extractionConfidence: transaction.confidence,
+            transactionFingerprint: bankTransactionFingerprint(statement.id, transaction),
+          })),
+        });
+      }
+      const safeCode = result.state === "OCR_REQUIRED" ? "ocr_required" : result.state === "NO_TRANSACTIONS" ? "no_transactions_detected" : null;
+      const safeSummary = result.state === "OCR_REQUIRED" ? "OCR processing is required and is not configured." : result.state === "NO_TRANSACTIONS" ? "No transaction rows were detected." : null;
+      await tx.grantBankProcessingAttempt.update({ where: { id: started.attemptId }, data: { providerName: result.providerName, providerVersion: result.providerVersion, status: "SUCCEEDED", safeFailureCode: safeCode, safeFailureSummary: safeSummary, completedAt: new Date() } });
+      await tx.grantBankStatement.update({
+        where: { id: statement.id },
+        data: {
+          extractionStatus: result.state === "EXTRACTED" ? "EXTRACTED" : "NEEDS_REVIEW",
+          extractionCompletedAt: new Date(),
+          periodStart: statement.periodStart ?? (result.statementSummary?.periodStart ? new Date(`${result.statementSummary.periodStart}T00:00:00.000Z`) : null),
+          periodEnd: statement.periodEnd ?? (result.statementSummary?.periodEnd ? new Date(`${result.statementSummary.periodEnd}T00:00:00.000Z`) : null),
+          openingBalance: statement.openingBalance ?? result.statementSummary?.openingBalance,
+          closingBalance: statement.closingBalance ?? result.statementSummary?.closingBalance,
+        },
+      });
+      await tx.grantBankImportBatch.update({ where: { id: batch.id }, data: { status: "NEEDS_REVIEW", safeFailureCode: null, safeFailureSummary: null } });
+      await tx.auditLog.create({ data: { actorUserId: input.actorUserId, action: result.state === "EXTRACTED" ? "grant.bank_statement.extracted" : "grant.bank_statement.extraction.review_required", entityType: "GrantBankStatement", entityId: statement.id, metadata: { reportId: input.reportId, importId: input.importId, extractionState: result.state, transactionsFound: transactions.length, providerName: result.providerName } } });
+      const updated = await findGrantBankImport(tx, input.reportId, input.importId);
+      if (!updated) throw new GrantBankImportError("The bank import could not be reloaded.", 500);
+      return toWorkspaceDto(updated, context.version.reportType, reportIsEditable(context));
+    }, { timeout: 15_000 });
+  } catch (error) {
+    const failure = extractionFailure(error);
+    await prisma.$transaction(async (tx) => {
+      await tx.grantBankProcessingAttempt.update({ where: { id: started.attemptId }, data: { status: "FAILED", safeFailureCode: failure.code, safeFailureSummary: failure.summary, completedAt: new Date() } });
+      await tx.grantBankStatement.update({ where: { id: input.statementId }, data: { extractionStatus: "FAILED", extractionCompletedAt: new Date() } });
+      await tx.grantBankImportBatch.update({ where: { id: input.importId }, data: { status: "FAILED", safeFailureCode: failure.code, safeFailureSummary: failure.summary } });
+      await tx.auditLog.create({ data: { actorUserId: input.actorUserId, action: "grant.bank_statement.extraction.failed", entityType: "GrantBankStatement", entityId: input.statementId, metadata: { reportId: input.reportId, importId: input.importId, safeFailureCode: failure.code } } });
+    });
+    throw new GrantBankImportError(failure.summary, 422);
+  }
 }

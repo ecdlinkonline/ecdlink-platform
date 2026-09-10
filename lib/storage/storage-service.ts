@@ -6,7 +6,7 @@ import { StorageAccessError, StorageNotFoundError, StorageUploadError } from "@/
 import { buildStorageObjectPath } from "@/lib/storage/path";
 import type { StorageProviderAdapter } from "@/lib/storage/storage-provider";
 import { SupabaseStorageProvider } from "@/lib/storage/supabase-storage-provider";
-import type { FileValidationPolicy, SafeFileAsset, SignedFileAccess, StorageAccessContext, StorageModule } from "@/lib/storage/types";
+import type { FileValidationPolicy, PrivateFileContent, SafeFileAsset, SignedFileAccess, StorageAccessContext, StorageModule } from "@/lib/storage/types";
 import { defaultDocumentPolicy, isPreviewableMimeType, type StorageUploadFile, validateStorageFile } from "@/lib/storage/validation";
 
 type StoredFileRecord = SafeFileAsset & {
@@ -180,6 +180,13 @@ export class StorageService {
     return this.createAccess(file, input.context, "storage.file.access.downloaded", file.originalFilename);
   }
 
+  async readFileForProcessing(fileAssetId: string): Promise<PrivateFileContent> {
+    const file = await this.requireSupabaseFile(fileAssetId);
+    const content = await this.provider.read(file.storageKey);
+    if (content.byteLength !== file.fileSize) throw new StorageAccessError("The private file content is incomplete.", 502);
+    return { content, originalFilename: file.originalFilename, mimeType: file.mimeType, fileSize: file.fileSize };
+  }
+
   async exists(input: { fileAssetId: string; context: StorageAccessContext }) {
     const file = await this.persistence.findFileAsset(input.fileAssetId);
     if (!file || file.storageProvider !== "supabase") return false;
@@ -243,6 +250,7 @@ export const storage = {
   uploadFileAsset: (input: UploadFileAssetInput) => getStorageService().uploadFileAsset(input),
   createPreviewAccess: (input: { fileAssetId: string; context: StorageAccessContext }) => getStorageService().createPreviewAccess(input),
   createDownloadAccess: (input: { fileAssetId: string; context: StorageAccessContext }) => getStorageService().createDownloadAccess(input),
+  readFileForProcessing: (fileAssetId: string) => getStorageService().readFileForProcessing(fileAssetId),
   exists: (input: { fileAssetId: string; context: StorageAccessContext }) => getStorageService().exists(input),
   rollbackStagedFileAsset: (input: { fileAssetId: string; uploadedByUserId: string; module: StorageModule; ownerId: string; entityId: string }) => getStorageService().rollbackStagedFileAsset(input),
 };
