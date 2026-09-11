@@ -137,7 +137,7 @@ export async function requireMutableGrantReport(tx: Prisma.TransactionClient, re
           organisations: { where: { removedAt: null }, orderBy: [{ isPrimary: "desc" as const }, { addedAt: "asc" as const }], include: { fundingOrganisation: { select: { id: true, name: true } }, donorOrganisation: { select: { id: true, name: true, organisationName: true } } } },
         },
       },
-      obligation: { select: { financialYear: true, quarter: true, tranche: { select: { id: true, trancheNumber: true, scheduledAmount: true, title: true } } } },
+      obligation: { select: { id: true, financialYear: true, quarter: true, tranche: { select: { id: true, trancheNumber: true, scheduledAmount: true, title: true } } } },
     },
   });
   if (!report) throw new GrantReportingServiceError("Grant report not found.", 404);
@@ -191,18 +191,33 @@ export async function saveGrantReportSection(
       const lead = report.award.organisations[0];
       const leadName = lead?.fundingOrganisation?.name ?? lead?.donorOrganisation?.organisationName ?? lead?.donorOrganisation?.name ?? null;
       const physicalAddress = [centre.physicalAddress, centre.suburb, centre.area, centre.province, centre.postalCode].filter(Boolean).join(", ") || null;
+      const reportingPeriodStart = new Date(`${input.data.reportingPeriodStart}T00:00:00.000Z`);
+      const reportingPeriodEnd = new Date(`${input.data.reportingPeriodEnd}T00:00:00.000Z`);
       await tx.grantReportVersion.update({
         where: { id: version.id },
         data: {
           financialYear: input.data.financialYear,
           quarter: input.data.quarter,
-          reportingPeriodStart: new Date(`${input.data.reportingPeriodStart}T00:00:00.000Z`),
-          reportingPeriodEnd: new Date(`${input.data.reportingPeriodEnd}T00:00:00.000Z`),
+          reportingPeriodStart,
+          reportingPeriodEnd,
           centreSnapshot: version.centreSnapshot ?? json({ id: centre.id, centreName: centre.centreName, npoNumber: centre.npoNumber, physicalAddress, contactPerson: centre.contactPerson, phone: centre.phone, email: centre.email }),
           projectSnapshot: version.projectSnapshot ?? json({ id: project.id, title: project.title, objective: project.objective, expectedOutcomes: project.expectedOutcomes, requiredItems: project.requiredItems }),
           awardSnapshot: version.awardSnapshot ?? json({ id: report.award.id, awardNumber: report.award.awardNumber, title: report.award.title, awardedAmount: report.award.awardedAmount, currency: report.award.currency }),
           fundingOrganisationSnapshot: version.fundingOrganisationSnapshot ?? json({ name: leadName, organisationType: lead?.organisationType ?? null, fundingOrganisationId: lead?.fundingOrganisationId ?? null, donorOrganisationId: lead?.donorOrganisationId ?? null }),
         },
+      });
+      await tx.grantReportingObligation.update({
+        where: { id: report.obligation.id },
+        data: { financialYear: input.data.financialYear, quarter: input.data.quarter, reportingPeriodStart, reportingPeriodEnd },
+      });
+      await tx.grantBankImportBatch.updateMany({
+        where: {
+          originatingGrantReportId: report.id,
+          financialYear: input.data.financialYear,
+          quarter: input.data.quarter,
+          status: { in: ["UPLOADING", "NEEDS_REVIEW", "READY_FOR_CONFIRMATION", "FAILED"] },
+        },
+        data: { reportingPeriodStart, reportingPeriodEnd },
       });
     } else if (input.section === "general") {
       const centre = report.award.centre;

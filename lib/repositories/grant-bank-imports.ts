@@ -11,7 +11,23 @@ export const grantBankImportInclude = Prisma.validator<Prisma.GrantBankImportBat
       file: { select: { originalFilename: true, mimeType: true, fileSize: true, uploadedByUserId: true } },
       transactions: {
         orderBy: [{ transactionDate: "asc" }, { sourcePage: "asc" }, { sourceRow: "asc" }, { createdAt: "asc" }],
-        select: { id: true, transactionDate: true, originalDescription: true, originalAmount: true, direction: true, runningBalance: true, sourcePage: true, sourceRow: true },
+        select: {
+          id: true,
+          transactionDate: true,
+          originalDescription: true,
+          originalAmount: true,
+          direction: true,
+          runningBalance: true,
+          sourcePage: true,
+          sourceRow: true,
+          suggestedType: true,
+          suggestedCategory: true,
+          suggestedConfidence: true,
+          confirmedType: true,
+          confirmedCategory: true,
+          reviewStatus: true,
+          reviewedAt: true,
+        },
       },
       processingAttempts: {
         where: { kind: "EXTRACTION" },
@@ -73,7 +89,7 @@ export function findConfirmedGrantBankImport(tx: Prisma.TransactionClient, input
 
 export function findEditableGrantBankImport(tx: Prisma.TransactionClient, input: { reportId: string; awardId: string; financialYear: string; quarter: number }) {
   return tx.grantBankImportBatch.findFirst({
-    where: { originatingGrantReportId: input.reportId, grantAwardId: input.awardId, financialYear: input.financialYear, quarter: input.quarter, status: { in: ["UPLOADING", "NEEDS_REVIEW", "FAILED"] } },
+    where: { originatingGrantReportId: input.reportId, grantAwardId: input.awardId, financialYear: input.financialYear, quarter: input.quarter, status: { in: ["UPLOADING", "NEEDS_REVIEW", "READY_FOR_CONFIRMATION", "FAILED"] } },
     orderBy: { createdAt: "desc" },
     select: grantBankImportIdentitySelect,
   });

@@ -1,3 +1,5 @@
+import { applyQuarterlyReportingPeriod } from "@/lib/grant-reports/quarterly-period";
+
 export const grantObligationTypes = ["INTERIM", "FINAL", "QUARTERLY_EXPENDITURE", "QUARTERLY_CASH_FLOW", "CUSTOM"] as const;
 export const grantObligationBases = ["QUARTER", "TRANCHE", "PERIOD", "FINAL", "CUSTOM"] as const;
 
@@ -73,7 +75,7 @@ export function updateGrantObligationValues(
   if (changedField === "type") {
     const basis = derivedObligationBasis(values.type) ?? "CUSTOM";
     const state = obligationFieldState({ type: values.type, basis });
-    return {
+    const updated: GrantObligationFormValues = {
       ...values,
       basis,
       grantTrancheId: "",
@@ -84,6 +86,7 @@ export function updateGrantObligationValues(
       description: state.showDescription ? values.description : "",
       title: values.titleCustomized ? values.title : suggestedQuarterlyTitle(values.type, values.financialYear, state.showQuarter ? values.quarter || 1 : ""),
     };
+    return state.showQuarter ? applyQuarterlyReportingPeriod(updated) : updated;
   }
 
   if (changedField === "basis" && values.type === "CUSTOM") {
@@ -99,8 +102,10 @@ export function updateGrantObligationValues(
   }
 
   if ((changedField === "financialYear" || changedField === "quarter") && !values.titleCustomized) {
-    return { ...values, title: suggestedQuarterlyTitle(values.type, values.financialYear, values.quarter) };
+    return applyQuarterlyReportingPeriod({ ...values, title: suggestedQuarterlyTitle(values.type, values.financialYear, values.quarter) });
   }
+
+  if (changedField === "financialYear" || changedField === "quarter") return applyQuarterlyReportingPeriod(values);
 
   return values;
 }

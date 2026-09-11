@@ -1,3 +1,5 @@
+import type { GrantBankTransactionCategory, GrantBankTransactionPresentationStatus } from "@/lib/grant-reports/bank-transaction-categorisation";
+
 export const grantBankImportReportTypes = ["QUARTERLY_EXPENDITURE", "QUARTERLY_CASH_FLOW"] as const;
 export const editableGrantBankImportStatuses = ["UPLOADING", "NEEDS_REVIEW", "FAILED"] as const;
 
@@ -35,6 +37,22 @@ export function expectedGrantBankStatementMonths(periodStart: string, periodEnd:
   }).filter((month): month is { value: string; label: string } => month !== null);
 }
 
+export function hasCompleteGrantBankStatementCoverage(
+  expectedMonths: ReadonlyArray<unknown>,
+  statements: ReadonlyArray<{ extractionStatus: string }>,
+) {
+  return expectedMonths.length > 0
+    && statements.length === expectedMonths.length
+    && statements.every((statement) => statement.extractionStatus === "EXTRACTED");
+}
+
+export function formatGrantBankCurrency(value: string | number, currency = "ZAR") {
+  const numericValue = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numericValue)) return "—";
+  const amount = new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(numericValue);
+  return currency.toUpperCase() === "ZAR" ? `R ${amount}` : `${currency.toUpperCase()} ${amount}`;
+}
+
 export type GrantBankStatementDto = {
   id: string;
   originalFilename: string;
@@ -61,6 +79,13 @@ export type GrantBankStatementDto = {
     debit: string | null;
     credit: string | null;
     balance: string | null;
+    sourcePage: number | null;
+    sourceRow: number | null;
+    suggestedCategory: GrantBankTransactionCategory | null;
+    suggestedConfidence: number | null;
+    confirmedCategory: GrantBankTransactionCategory | null;
+    reviewStatus: GrantBankTransactionPresentationStatus;
+    reviewedAt: string | null;
   }>;
 };
 
@@ -81,4 +106,12 @@ export type GrantBankImportWorkspaceDto = {
   statementsUploaded: number;
   expectedMonths: Array<{ value: string; label: string }>;
   statements: GrantBankStatementDto[];
+  categorisation: {
+    total: number;
+    reviewed: number;
+    remaining: number;
+    percentage: number;
+    readyToComplete: boolean;
+    complete: boolean;
+  };
 };

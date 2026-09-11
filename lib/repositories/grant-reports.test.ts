@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { Prisma } from "@prisma/client";
 import { buildGrantReportMetrics, buildGrantReportWhere, findMatchingQuarterlyExpenditureIncome } from "./grant-reports";
+
+test("grant report writes use a bounded transaction timeout suitable for remote databases", () => {
+  const source = readFileSync(new URL("./grant-reports.ts", import.meta.url), "utf8");
+  assert.match(source, /prisma\.\$transaction\(operation, \{ timeout: 15_000 \}\)/);
+});
 
 test("report filters produce server-side persisted-data predicates", () => {
   const where = buildGrantReportWhere({ query: "Bright", status: "DRAFT", type: "FINAL", centreId: "centre-1", organisationId: "org-1" });

@@ -6,7 +6,7 @@ import { buildSuggestedGrantIndicators, dbeQuarterlyCashFlowExpenseCategories, d
 import type { GrantReportFiltersInput } from "@/lib/validators/grant-reports";
 
 export function withGrantReportingTransaction<T>(operation: (tx: Prisma.TransactionClient) => Promise<T>) {
-  return prisma.$transaction(operation);
+  return prisma.$transaction(operation, { timeout: 15_000 });
 }
 
 const partyInclude = {

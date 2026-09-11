@@ -1,11 +1,19 @@
 import { z } from "zod";
 import { addGrantAmounts, grantReportBeneficiaryCategories, grantReportCertificationParties, grantReportRacialGroups, quarterlyCashFlowTotals, quarterlyExpenditureTotals, subtractGrantAmounts, sumGrantAmounts } from "@/lib/grant-reports/editor";
+import { resolveQuarterlyReportingPeriod } from "@/lib/grant-reports/quarterly-period";
 
 const optionalId = z.string().trim().min(1).optional().or(z.literal("").transform(() => undefined));
 const optionalDate = z.preprocess(
   (value) => value === "" || value === null ? undefined : value,
   z.coerce.date().optional(),
 );
+
+function validateQuarterlyReportingPeriod(input: { financialYear: string; quarter: number; reportingPeriodStart: string; reportingPeriodEnd: string }, context: z.RefinementCtx) {
+  const expected = resolveQuarterlyReportingPeriod(input.financialYear, input.quarter);
+  if (!expected) return;
+  if (input.reportingPeriodStart !== expected.reportingPeriodStart) context.addIssue({ code: "custom", path: ["reportingPeriodStart"], message: `Quarter ${input.quarter} must start on ${expected.reportingPeriodStart}.` });
+  if (input.reportingPeriodEnd !== expected.reportingPeriodEnd) context.addIssue({ code: "custom", path: ["reportingPeriodEnd"], message: `Quarter ${input.quarter} must end on ${expected.reportingPeriodEnd}.` });
+}
 
 export const grantReportFiltersSchema = z.object({
   query: z.string().trim().max(100).optional(),
@@ -68,6 +76,9 @@ export const createGrantReportingObligationSchema = z.object({
   if (standardBasis && input.basis !== standardBasis) context.addIssue({ code: "custom", path: ["basis"], message: `${input.type} reports require the ${standardBasis} obligation basis.` });
   if (input.reportingPeriodStart && input.reportingPeriodEnd && input.reportingPeriodEnd < input.reportingPeriodStart) context.addIssue({ code: "custom", path: ["reportingPeriodEnd"], message: "Reporting period end must be on or after its start." });
   if (input.basis === "QUARTER" && (!input.financialYear || !input.quarter || !input.reportingPeriodStart || !input.reportingPeriodEnd)) context.addIssue({ code: "custom", path: ["basis"], message: "Quarter-based obligations require a financial year, quarter and reporting period." });
+  if (input.basis === "QUARTER" && input.financialYear && input.quarter && input.reportingPeriodStart && input.reportingPeriodEnd) {
+    validateQuarterlyReportingPeriod({ financialYear: input.financialYear, quarter: input.quarter, reportingPeriodStart: input.reportingPeriodStart.toISOString().slice(0, 10), reportingPeriodEnd: input.reportingPeriodEnd.toISOString().slice(0, 10) }, context);
+  }
   if (input.basis === "TRANCHE" && !input.grantTrancheId) context.addIssue({ code: "custom", path: ["grantTrancheId"], message: "Tranche-based obligations require a tranche." });
   if (["PERIOD", "FINAL"].includes(input.basis) && (!input.reportingPeriodStart || !input.reportingPeriodEnd)) context.addIssue({ code: "custom", path: ["basis"], message: "Period and final obligations require reporting period dates." });
   if (input.basis !== "TRANCHE" && input.grantTrancheId) context.addIssue({ code: "custom", path: ["grantTrancheId"], message: "Only tranche-based obligations may select a tranche." });
@@ -173,6 +184,7 @@ export const saveQuarterlyExpenditureGeneralSchema = z.object({
     reportingPeriodEnd: z.string().date(),
   }).superRefine((input, context) => {
     if (input.reportingPeriodEnd < input.reportingPeriodStart) context.addIssue({ code: "custom", path: ["reportingPeriodEnd"], message: "Reporting period end must be on or after its start." });
+    validateQuarterlyReportingPeriod(input, context);
   }),
 });
 
@@ -259,6 +271,7 @@ export const saveQuarterlyCashFlowGeneralSchema = z.object({
     reportingPeriodEnd: z.string().date(),
   }).superRefine((input, context) => {
     if (input.reportingPeriodEnd < input.reportingPeriodStart) context.addIssue({ code: "custom", path: ["reportingPeriodEnd"], message: "Reporting period end must be on or after its start." });
+    validateQuarterlyReportingPeriod(input, context);
   }),
 });
 

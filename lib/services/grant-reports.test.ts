@@ -104,8 +104,8 @@ test("obligation creation eagerly creates Draft report version 1 and audits the 
 });
 
 function reportSectionTransaction(versionStatus = "DRAFT", reportStatus = "DRAFT", reportType = "FINAL") {
-  const captured: { sustainabilityRows?: unknown; certifications?: Array<Record<string, unknown>>; audit?: Record<string, unknown>; deleted?: boolean; versionUpdates: Array<Record<string, unknown>>; financialCreates: Array<Record<string, unknown>> } = { versionUpdates: [], financialCreates: [] };
-  const report = { id: "report-1", status: reportStatus, currentVersionNumber: 1, award: { id: "award-1", awardNumber: "AW-1", title: "Award", awardedAmount: 1000, currency: "ZAR", centre: { id: "centre-1", centreName: "Centre", npoNumber: null, physicalAddress: null, suburb: null, area: null, province: null, postalCode: null, contactPerson: null, phone: null, email: null }, fundingProject: { id: "project-1", title: "Project", objective: null, expectedOutcomes: [], requiredItems: [] }, organisations: [] }, obligation: { financialYear: "2026", quarter: 1, tranche: null } };
+  const captured: { sustainabilityRows?: unknown; certifications?: Array<Record<string, unknown>>; audit?: Record<string, unknown>; deleted?: boolean; obligationUpdate?: Record<string, unknown>; bankBatchWhere?: Record<string, unknown>; bankBatchUpdate?: Record<string, unknown>; versionUpdates: Array<Record<string, unknown>>; financialCreates: Array<Record<string, unknown>> } = { versionUpdates: [], financialCreates: [] };
+  const report = { id: "report-1", status: reportStatus, currentVersionNumber: 1, award: { id: "award-1", awardNumber: "AW-1", title: "Award", awardedAmount: 1000, currency: "ZAR", centre: { id: "centre-1", centreName: "Centre", npoNumber: null, physicalAddress: null, suburb: null, area: null, province: null, postalCode: null, contactPerson: null, phone: null, email: null }, fundingProject: { id: "project-1", title: "Project", objective: null, expectedOutcomes: [], requiredItems: [] }, organisations: [] }, obligation: { id: "obligation-1", financialYear: "2026", quarter: 1, tranche: null } };
   const version = { id: "version-1", versionNumber: 1, status: versionStatus, reportType, centreSnapshot: null, projectSnapshot: null, awardSnapshot: null, fundingOrganisationSnapshot: null, trancheSnapshot: null, totalIncome: new Prisma.Decimal("1000.00"), totalExpenditure: new Prisma.Decimal("200.00") };
   const transaction = {
     grantReport: { findUnique: async () => report },
@@ -113,6 +113,8 @@ function reportSectionTransaction(versionStatus = "DRAFT", reportStatus = "DRAFT
     grantReportFinancialLine: { findMany: async () => [], deleteMany: async () => ({}), create: async ({ data }: { data: Record<string, unknown> }) => { captured.financialCreates.push(data); return {}; }, update: async () => ({}) },
     grantReportSustainabilityItem: { deleteMany: async () => { captured.deleted = true; }, createMany: async ({ data }: { data: unknown }) => { captured.sustainabilityRows = data; } },
     grantReportCertification: { deleteMany: async () => { captured.deleted = true; }, createMany: async ({ data }: { data: Array<Record<string, unknown>> }) => { captured.certifications = data; } },
+    grantReportingObligation: { update: async ({ data }: { data: Record<string, unknown> }) => { captured.obligationUpdate = data; return {}; } },
+    grantBankImportBatch: { updateMany: async ({ where, data }: { where: Record<string, unknown>; data: Record<string, unknown> }) => { captured.bankBatchWhere = where; captured.bankBatchUpdate = data; return { count: 1 }; } },
     auditLog: { create: async ({ data }: { data: Record<string, unknown> }) => { captured.audit = data; } },
   };
   return { transaction, captured };
@@ -212,8 +214,21 @@ test("cash received and operating expenses persist calculated cash-flow totals w
 test("cash flow source income is copied once and never overwrites saved cash received rows", async () => {
   const initialized = reportSectionTransaction("DRAFT", "DRAFT", "QUARTERLY_CASH_FLOW");
   Object.assign(initialized.transaction.grantReportVersion, { findMany: async ({ where }: { where: { status: string } }) => where.status === "APPROVED" ? [{ id: "source-version", status: "APPROVED", versionNumber: 2, report: { currentVersionNumber: 2 }, financialLines: [{ lineType: "FUNDING_RECEIVED", categoryName: "Department subsidy", quarterlyActual: new Prisma.Decimal("800.00") }, { lineType: "OTHER_INCOME", categoryName: "Fundraising", quarterlyActual: new Prisma.Decimal("25.00") }] }] : [] });
-  const generalInput = saveGrantReportSectionSchema.parse({ section: "cash_flow_general", data: { financialYear: "2026", quarter: 1, reportingPeriodStart: "2026-01-01", reportingPeriodEnd: "2026-03-31" } });
+  const generalInput = saveGrantReportSectionSchema.parse({ section: "cash_flow_general", data: { financialYear: "2026", quarter: 1, reportingPeriodStart: "2026-04-01", reportingPeriodEnd: "2026-06-30" } });
   await saveGrantReportSection("report-1", generalInput, "internal-user-1", runner(initialized.transaction), async () => ({ ok: true } as never));
+  const generalVersionUpdate = initialized.captured.versionUpdates.find((update) => update.reportingPeriodStart instanceof Date);
+  assert.equal((generalVersionUpdate?.reportingPeriodStart as Date).toISOString().slice(0, 10), "2026-04-01");
+  assert.equal((generalVersionUpdate?.reportingPeriodEnd as Date).toISOString().slice(0, 10), "2026-06-30");
+  assert.equal((initialized.captured.obligationUpdate?.reportingPeriodStart as Date).toISOString().slice(0, 10), "2026-04-01");
+  assert.equal((initialized.captured.obligationUpdate?.reportingPeriodEnd as Date).toISOString().slice(0, 10), "2026-06-30");
+  assert.equal((initialized.captured.bankBatchUpdate?.reportingPeriodStart as Date).toISOString().slice(0, 10), "2026-04-01");
+  assert.equal((initialized.captured.bankBatchUpdate?.reportingPeriodEnd as Date).toISOString().slice(0, 10), "2026-06-30");
+  assert.deepEqual(initialized.captured.bankBatchWhere, {
+    originatingGrantReportId: "report-1",
+    financialYear: "2026",
+    quarter: 1,
+    status: { in: ["UPLOADING", "NEEDS_REVIEW", "READY_FOR_CONFIRMATION", "FAILED"] },
+  });
   assert.deepEqual(initialized.captured.financialCreates.slice(0, 2).map((row) => ({ lineType: row.lineType, categoryName: row.categoryName, amount: String(row.quarterlyActual) })), [{ lineType: "FUNDING_RECEIVED", categoryName: "Subsidy", amount: "800.00" }, { lineType: "OTHER_INCOME", categoryName: "Fundraising", amount: "25.00" }]);
 
   const copiedThenExpense = reportSectionTransaction("DRAFT", "DRAFT", "QUARTERLY_CASH_FLOW");

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { Prisma } from "@prisma/client";
-import { assertGrantBankImportCapacity, expectedGrantBankStatementMonths, grantBankImportMatchesContext, isEditableGrantBankImportStatus, isGrantBankImportReportType } from "./bank-import";
+import { assertGrantBankImportCapacity, expectedGrantBankStatementMonths, formatGrantBankCurrency, grantBankImportMatchesContext, hasCompleteGrantBankStatementCoverage, isEditableGrantBankImportStatus, isGrantBankImportReportType } from "./bank-import";
 import { assertGrantBankReportEligibility, canStartGrantBankStatementExtraction, createOrResumeGrantBankImport } from "@/lib/services/grant-bank-imports";
 import { findGrantBankStatementForAccess, grantBankImportIdentitySelect, grantBankImportInclude, grantBankStatementAccessSelect } from "@/lib/repositories/grant-bank-imports";
 import { grantBankStatementMetadataSchema } from "@/lib/validators/grant-bank-imports";
@@ -27,6 +27,19 @@ test("expected statement months derive from the saved reporting period rather th
     { value: "2026-05-01", label: "May 2026" },
     { value: "2026-06-01", label: "June 2026" },
   ]);
+});
+
+test("completion coverage follows all expected months and remains blocked when one is absent", () => {
+  const months = expectedGrantBankStatementMonths("2026-04-01", "2026-06-30");
+  assert.equal(hasCompleteGrantBankStatementCoverage(months, months.map(() => ({ extractionStatus: "EXTRACTED" }))), true);
+  assert.equal(hasCompleteGrantBankStatementCoverage(months, months.slice(0, 2).map(() => ({ extractionStatus: "EXTRACTED" }))), false);
+});
+
+test("bank money formatting preserves cents and always renders two decimal places", () => {
+  assert.equal(formatGrantBankCurrency("68303.86"), "R 68,303.86");
+  assert.equal(formatGrantBankCurrency("47921.28"), "R 47,921.28");
+  assert.equal(formatGrantBankCurrency("93"), "R 93.00");
+  assert.equal(formatGrantBankCurrency("1892.00"), "R 1,892.00");
 });
 
 test("batch alignment requires the same report, award, centre, financial year and quarter", () => {
@@ -69,6 +82,7 @@ test("all bank-import API routes use database-backed report admin authorization"
     "app/api/grant-reports/[reportId]/bank-import/[importId]/statements/[statementId]/route.ts",
     "app/api/grant-reports/[reportId]/bank-import/[importId]/statements/[statementId]/file/route.ts",
     "app/api/grant-reports/[reportId]/bank-import/[importId]/statements/[statementId]/extract/route.ts",
+    "app/api/grant-reports/[reportId]/bank-import/[importId]/transactions/action/route.ts",
   ];
   const auth = readFileSync("lib/api/report-auth.ts", "utf8");
   assert.match(auth, /requireIdentityAdmin\(\)/);
@@ -101,6 +115,7 @@ test("an existing report resolves a lightweight bank import before hydrating its
   assert.match(source, /createOrResumeGrantBankImport[\s\S]*TransactionIsolationLevel\.Serializable, timeout: 15_000/);
   assert.match(repository, /findConfirmedGrantBankImport[\s\S]*select: grantBankImportIdentitySelect/);
   assert.match(repository, /findEditableGrantBankImport[\s\S]*select: grantBankImportIdentitySelect/);
+  assert.match(repository, /findEditableGrantBankImport[\s\S]*READY_FOR_CONFIRMATION/);
 });
 
 test("the real start/open service reopens an existing quarterly import and hydrates after the transaction", async () => {
@@ -216,17 +231,29 @@ test("manual quarterly report save paths remain intact beside the bank-import en
 
 test("extraction persists normalized rows and processing audit state without categorisation", () => {
   const source = readFileSync("lib/services/grant-bank-imports.ts", "utf8");
-  assert.match(source, /grantBankProcessingAttempt\.create/);
-  assert.match(source, /grantBankTransaction\.createMany/);
-  assert.match(source, /transactionFingerprint: bankTransactionFingerprint/);
-  assert.match(source, /extractionStatus: result\.state === "EXTRACTED" \? "EXTRACTED" : "NEEDS_REVIEW"/);
-  assert.doesNotMatch(source, /suggestedType:|suggestedCategory:|confirmedType:|confirmedCategory:/);
-  assert.match(source, /actorUserId: input\.actorUserId, action: "grant\.bank_statement\.extraction\.started"/);
-  assert.match(source, /extractGrantBankStatement[\s\S]*TransactionIsolationLevel\.Serializable, timeout: 15_000/);
+  const extraction = source.slice(source.indexOf("export async function extractGrantBankStatement"), source.indexOf("export async function suggestGrantBankTransactionCategories"));
+  assert.match(extraction, /grantBankProcessingAttempt\.create/);
+  assert.match(extraction, /grantBankTransaction\.createMany/);
+  assert.match(extraction, /transactionFingerprint: bankTransactionFingerprint/);
+  assert.match(extraction, /extractionStatus: result\.state === "EXTRACTED" \? "EXTRACTED" : "NEEDS_REVIEW"/);
+  assert.doesNotMatch(extraction, /suggestedType:|suggestedCategory:|confirmedType:|confirmedCategory:/);
+  assert.match(extraction, /actorUserId: input\.actorUserId, action: "grant\.bank_statement\.extraction\.started"/);
+  assert.match(extraction, /TransactionIsolationLevel\.Serializable, timeout: 15_000/);
 });
 
 test("a no-transactions parser result can be retried after parser support improves without duplicating rows", () => {
   assert.equal(canStartGrantBankStatementExtraction({ extractionStatus: "NEEDS_REVIEW", transactionCount: 0, latestSafeFailureCode: "no_transactions_detected" }), true);
   assert.equal(canStartGrantBankStatementExtraction({ extractionStatus: "NEEDS_REVIEW", transactionCount: 0, latestSafeFailureCode: "ocr_required" }), false);
   assert.equal(canStartGrantBankStatementExtraction({ extractionStatus: "NEEDS_REVIEW", transactionCount: 1, latestSafeFailureCode: "no_transactions_detected" }), false);
+});
+
+test("categorisation mutations are scoped, audited and never write Grant Report financial lines", () => {
+  const source = readFileSync("lib/services/grant-bank-imports.ts", "utf8");
+  const categorisation = source.slice(source.indexOf("export async function suggestGrantBankTransactionCategories"));
+  assert.match(categorisation, /requireMutableBatch\(tx, input\)/);
+  assert.match(categorisation, /grant\.bank_transactions\.categorisation\.suggested/);
+  assert.match(categorisation, /grant\.bank_transaction\.categorisation\.confirmed/);
+  assert.match(categorisation, /grant\.bank_import\.categorisation\.completed/);
+  assert.match(categorisation, /status: "READY_FOR_CONFIRMATION"/);
+  assert.doesNotMatch(categorisation, /grantReportFinancialLine\.(?:create|update|delete)|grantReportBankTransactionSource\.(?:create|update|delete)/);
 });

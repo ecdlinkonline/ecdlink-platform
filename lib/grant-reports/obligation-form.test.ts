@@ -55,3 +55,12 @@ test("quarterly title follows year and quarter until the user edits it", () => {
   current = updateGrantObligationValues({ ...current, quarter: 3 }, "quarter");
   assert.equal(current.title, "My reviewed title");
 });
+
+test("quarterly obligation fields derive the full financial quarter", () => {
+  const current = updateGrantObligationValues(
+    values({ type: "QUARTERLY_CASH_FLOW", financialYear: "2026", quarter: 1 }),
+    "quarter",
+  );
+  assert.equal(current.reportingPeriodStart, "2026-04-01");
+  assert.equal(current.reportingPeriodEnd, "2026-06-30");
+});

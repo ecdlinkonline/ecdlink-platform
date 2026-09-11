@@ -2,8 +2,9 @@ import "server-only";
 
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
-import { assertGrantBankImportCapacity, expectedGrantBankStatementMonths, grantBankImportMatchesContext, isEditableGrantBankImportStatus, isGrantBankImportReportType, type GrantBankImportWorkspaceDto } from "@/lib/grant-reports/bank-import";
+import { assertGrantBankImportCapacity, expectedGrantBankStatementMonths, grantBankImportMatchesContext, hasCompleteGrantBankStatementCoverage, isEditableGrantBankImportStatus, isGrantBankImportReportType, type GrantBankImportWorkspaceDto } from "@/lib/grant-reports/bank-import";
 import { bankStatementExtractor, BankStatementExtractionError, bankTransactionFingerprint } from "@/lib/grant-reports/bank-statement-extraction";
+import { buildAutomaticGrantBankTransactionConfirmation, buildGrantBankTransactionReviewUpdate, categorisationPresentationStatus, categorisationProgress, grantBankTransactionCategoriser, isGrantBankTransactionCategory, shouldAutoConfirmGrantBankSuggestion, shouldAutoConfirmPersistedGrantBankSuggestion, type GrantBankTransactionCategory } from "@/lib/grant-reports/bank-transaction-categorisation";
 import { findActiveSuperAdmin, findConfirmedGrantBankImport, findEditableGrantBankImport, findGrantBankImport, findGrantBankReportContext, findGrantBankStatementForAccess, grantBankImportIdentitySelect, type GrantBankImportRecord } from "@/lib/repositories/grant-bank-imports";
 import { storage } from "@/lib/storage/storage-service";
 import type { SignedFileAccess } from "@/lib/storage/types";
@@ -82,6 +83,10 @@ function toWorkspaceDto(batch: GrantBankImportRecord, reportType: string, report
   if (!isGrantBankImportReportType(reportType)) throw new GrantBankImportError("This report does not support bank statement import.", 422);
   const start = dateOnly(batch.reportingPeriodStart)!;
   const end = dateOnly(batch.reportingPeriodEnd)!;
+  const expectedMonths = expectedGrantBankStatementMonths(start, end);
+  const allTransactions = batch.statements.flatMap((statement) => statement.transactions);
+  const progress = categorisationProgress(allTransactions);
+  const allStatementsExtracted = hasCompleteGrantBankStatementCoverage(expectedMonths, batch.statements);
   return {
     id: batch.id,
     reportId: batch.originatingGrantReportId,
@@ -97,7 +102,7 @@ function toWorkspaceDto(batch: GrantBankImportRecord, reportType: string, report
     status: batch.status,
     editable: reportEditable && isEditableGrantBankImportStatus(batch.status),
     statementsUploaded: batch.statements.length,
-    expectedMonths: expectedGrantBankStatementMonths(start, end),
+    expectedMonths,
     statements: batch.statements.map((statement) => {
       const extraction = extractionPresentation(statement);
       return {
@@ -126,9 +131,21 @@ function toWorkspaceDto(batch: GrantBankImportRecord, reportType: string, report
           debit: transaction.direction === "DEBIT" ? transaction.originalAmount.toFixed(2) : null,
           credit: transaction.direction === "CREDIT" ? transaction.originalAmount.toFixed(2) : null,
           balance: transaction.runningBalance?.toFixed(2) ?? null,
+          sourcePage: transaction.sourcePage,
+          sourceRow: transaction.sourceRow,
+          suggestedCategory: isGrantBankTransactionCategory(transaction.suggestedCategory) ? transaction.suggestedCategory : null,
+          suggestedConfidence: transaction.suggestedConfidence !== null ? Number(transaction.suggestedConfidence) : null,
+          confirmedCategory: isGrantBankTransactionCategory(transaction.confirmedCategory) ? transaction.confirmedCategory : null,
+          reviewStatus: categorisationPresentationStatus(transaction),
+          reviewedAt: transaction.reviewedAt?.toISOString() ?? null,
         })),
       };
     }),
+    categorisation: {
+      ...progress,
+      readyToComplete: progress.readyToComplete && allStatementsExtracted,
+      complete: ["READY_FOR_CONFIRMATION", "CONFIRMED"].includes(batch.status),
+    },
   };
 }
 
@@ -386,4 +403,153 @@ export async function extractGrantBankStatement(input: { reportId: string; impor
     });
     throw new GrantBankImportError(failure.summary, 422);
   }
+}
+
+export async function suggestGrantBankTransactionCategories(input: { reportId: string; importId: string; actorUserId: string }) {
+  const context = await requireActorAndContext(prisma, input.actorUserId, input.reportId);
+  const current = await findGrantBankImport(prisma, input.reportId, input.importId);
+  if (!current) throw new GrantBankImportError("Bank statement import not found.", 404);
+  assertEditableBatch(current, context);
+  const candidates = current.statements
+    .flatMap((statement) => statement.transactions)
+    .filter((transaction) => transaction.reviewStatus !== "REVIEWED");
+  if (candidates.length === 0) return toWorkspaceDto(current, context.version.reportType, reportIsEditable(context));
+
+  const suggestions = await Promise.all(candidates.map(async (transaction) => ({
+    transactionId: transaction.id,
+    suggestion: await grantBankTransactionCategoriser.suggest({
+      description: transaction.originalDescription,
+      direction: transaction.direction,
+      amount: Number(transaction.originalAmount),
+    }),
+  })));
+
+  return prisma.$transaction(async (tx) => {
+    const { context: revalidatedContext, batch } = await requireMutableBatch(tx, input);
+    const transactionsById = new Map(batch.statements.flatMap((statement) => statement.transactions).map((transaction) => [transaction.id, transaction]));
+    let applied = 0;
+    let needsReview = 0;
+    let automaticallyConfirmed = 0;
+    for (const item of suggestions) {
+      const transaction = transactionsById.get(item.transactionId);
+      if (!transaction || transaction.reviewStatus === "REVIEWED") continue;
+      const hasPersistedSuggestion = Boolean(transaction.suggestedCategory);
+      const autoConfirm = hasPersistedSuggestion
+        ? shouldAutoConfirmPersistedGrantBankSuggestion(transaction, item.suggestion)
+        : shouldAutoConfirmGrantBankSuggestion(item.suggestion);
+      if (hasPersistedSuggestion && !autoConfirm) continue;
+      await tx.grantBankTransaction.update({
+        where: { id: transaction.id },
+        data: {
+          ...(hasPersistedSuggestion ? {} : {
+            suggestedType: item.suggestion.type,
+            suggestedCategory: item.suggestion.category,
+            suggestedConfidence: item.suggestion.confidence,
+            reviewStatus: item.suggestion.requiresReview ? "NEEDS_REVIEW" as const : "UNREVIEWED" as const,
+          }),
+          ...buildAutomaticGrantBankTransactionConfirmation(item.suggestion),
+        },
+      });
+      applied += 1;
+      if (!hasPersistedSuggestion && item.suggestion.requiresReview) needsReview += 1;
+      if (autoConfirm) automaticallyConfirmed += 1;
+    }
+    const attemptedAt = new Date();
+    const attemptNumber = await tx.grantBankProcessingAttempt.count({ where: { batchId: batch.id, kind: "CLASSIFICATION" } }) + 1;
+    await tx.grantBankProcessingAttempt.create({
+      data: {
+        batchId: batch.id,
+        kind: "CLASSIFICATION",
+        providerName: [...new Set(suggestions.map((item) => item.suggestion.providerName))].join(","),
+        providerVersion: "1",
+        attemptNumber,
+        status: "SUCCEEDED",
+        startedAt: attemptedAt,
+        completedAt: attemptedAt,
+      },
+    });
+    await tx.auditLog.create({
+      data: {
+        actorUserId: input.actorUserId,
+        action: "grant.bank_transactions.categorisation.suggested",
+        entityType: "GrantBankImportBatch",
+        entityId: batch.id,
+        metadata: { reportId: input.reportId, transactionsConsidered: suggestions.length, suggestionsApplied: applied, needsReview, automaticallyConfirmed },
+      },
+    });
+    if (automaticallyConfirmed > 0) {
+      await tx.auditLog.create({
+        data: {
+          actorUserId: input.actorUserId,
+          action: "grant.bank_transactions.categorisation.auto_confirmed",
+          entityType: "GrantBankImportBatch",
+          entityId: batch.id,
+          metadata: { reportId: input.reportId, automaticallyConfirmed, providerName: "deterministic-rules", confidenceThreshold: 0.9 },
+        },
+      });
+    }
+    const updated = await findGrantBankImport(tx, input.reportId, input.importId);
+    if (!updated) throw new GrantBankImportError("The bank import could not be reloaded.", 500);
+    return toWorkspaceDto(updated, revalidatedContext.version.reportType, reportIsEditable(revalidatedContext));
+  }, { timeout: 15_000 });
+}
+
+export async function confirmGrantBankTransactionCategory(input: {
+  reportId: string;
+  importId: string;
+  transactionId: string;
+  category: GrantBankTransactionCategory;
+  actorUserId: string;
+}) {
+  return prisma.$transaction(async (tx) => {
+    const { context, batch } = await requireMutableBatch(tx, input);
+    const transaction = batch.statements.flatMap((statement) => statement.transactions).find((candidate) => candidate.id === input.transactionId);
+    if (!transaction) throw new GrantBankImportError("Bank transaction not found.", 404);
+    const reviewedAt = new Date();
+    const update = buildGrantBankTransactionReviewUpdate({ category: input.category, actorUserId: input.actorUserId, reviewedAt });
+    await tx.grantBankTransaction.update({ where: { id: transaction.id }, data: update });
+    await tx.auditLog.create({
+      data: {
+        actorUserId: input.actorUserId,
+        action: "grant.bank_transaction.categorisation.confirmed",
+        entityType: "GrantBankTransaction",
+        entityId: transaction.id,
+        before: { confirmedType: transaction.confirmedType, confirmedCategory: transaction.confirmedCategory, reviewStatus: transaction.reviewStatus },
+        after: { confirmedType: update.confirmedType, confirmedCategory: update.confirmedCategory, reviewStatus: update.reviewStatus, reviewedAt },
+        metadata: { reportId: input.reportId, importId: input.importId, manualOverride: transaction.suggestedCategory !== input.category },
+      },
+    });
+    const updated = await findGrantBankImport(tx, input.reportId, input.importId);
+    if (!updated) throw new GrantBankImportError("The bank import could not be reloaded.", 500);
+    return toWorkspaceDto(updated, context.version.reportType, reportIsEditable(context));
+  }, { timeout: 15_000 });
+}
+
+export async function completeGrantBankTransactionCategorisation(input: { reportId: string; importId: string; actorUserId: string }) {
+  return prisma.$transaction(async (tx) => {
+    const { context, batch } = await requireMutableBatch(tx, input);
+    const expectedMonths = expectedGrantBankStatementMonths(dateOnly(batch.reportingPeriodStart)!, dateOnly(batch.reportingPeriodEnd)!);
+    if (!hasCompleteGrantBankStatementCoverage(expectedMonths, batch.statements)) {
+      throw new GrantBankImportError("Extract all required bank statements before completing categorisation.", 409);
+    }
+    const progress = categorisationProgress(batch.statements.flatMap((statement) => statement.transactions));
+    if (!progress.readyToComplete) {
+      throw new GrantBankImportError(`Review all transactions before completing categorisation. ${progress.remaining} remaining.`, 409);
+    }
+    await tx.grantBankImportBatch.update({ where: { id: batch.id }, data: { status: "READY_FOR_CONFIRMATION" } });
+    await tx.auditLog.create({
+      data: {
+        actorUserId: input.actorUserId,
+        action: "grant.bank_import.categorisation.completed",
+        entityType: "GrantBankImportBatch",
+        entityId: batch.id,
+        before: { status: batch.status },
+        after: { status: "READY_FOR_CONFIRMATION" },
+        metadata: { reportId: input.reportId, transactionsReviewed: progress.reviewed },
+      },
+    });
+    const updated = await findGrantBankImport(tx, input.reportId, input.importId);
+    if (!updated) throw new GrantBankImportError("The bank import could not be reloaded.", 500);
+    return toWorkspaceDto(updated, context.version.reportType, reportIsEditable(context));
+  }, { timeout: 15_000 });
 }

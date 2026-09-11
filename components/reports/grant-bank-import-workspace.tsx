@@ -2,13 +2,14 @@
 
 import Link from "next/link";
 import { useRef, useState } from "react";
-import { ArrowLeft, Download, Eye, FileUp, Landmark, Pencil, ScanText, Trash2 } from "lucide-react";
+import { ArrowLeft, Check, Download, Eye, FileUp, Landmark, Pencil, ScanText, Sparkles, Trash2 } from "lucide-react";
 import { BreadcrumbLabel } from "@/components/app-shell/breadcrumb-label";
-import { PageHeader, StatusBadge, useToast } from "@/components/design-system";
+import { Badge, PageHeader, Progress, StatusBadge, useToast } from "@/components/design-system";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { formatGrantCurrency, formatGrantLabel, reportTypeLabels } from "@/lib/grant-reports/types";
-import type { GrantBankImportWorkspaceDto, GrantBankStatementDto } from "@/lib/grant-reports/bank-import";
+import { formatGrantLabel, reportTypeLabels } from "@/lib/grant-reports/types";
+import { formatGrantBankCurrency, type GrantBankImportWorkspaceDto, type GrantBankStatementDto } from "@/lib/grant-reports/bank-import";
+import { grantBankTransactionCategories, isGrantBankTransactionCategory, type GrantBankTransactionCategory } from "@/lib/grant-reports/bank-transaction-categorisation";
 
 const inputClass = "mt-1 w-full rounded-lg border border-brand-line bg-white px-3 py-2 text-sm text-brand-ink outline-none focus:border-brand-navy disabled:cursor-not-allowed disabled:bg-slate-100 dark:border-slate-700 dark:bg-slate-950 dark:text-white";
 
@@ -96,6 +97,28 @@ export function GrantBankImportWorkspace({ initialData }: { initialData: GrantBa
     } finally { setBusy(null); }
   }
 
+  async function categorise(action: { action: "suggest" | "complete" } | { action: "confirm"; transactionId: string; category: GrantBankTransactionCategory }) {
+    const busyKey = action.action === "confirm" ? action.transactionId : `categorisation-${action.action}`;
+    setBusy(busyKey);
+    try {
+      const response = await fetch(`/api/grant-reports/${data.reportId}/bank-import/${data.id}/transactions/action`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(action),
+      });
+      const result = await response.json();
+      if (!response.ok || !result.ok) throw new Error(result.error ?? "The transaction categorisation could not be updated.");
+      setData(result.data);
+      pushToast(action.action === "suggest"
+        ? { title: "Suggestions ready", description: "High-confidence deterministic matches were confirmed automatically. Review every remaining transaction." }
+        : action.action === "complete"
+          ? { title: "Categorisation complete", description: "The reviewed transactions are ready for the next controlled reporting phase." }
+          : { title: "Transaction reviewed", description: "The selected category was confirmed without changing the bank transaction." });
+    } catch (error) {
+      pushToast({ title: "Categorisation failed", description: error instanceof Error ? error.message : "The transaction categorisation could not be updated." });
+    } finally { setBusy(null); }
+  }
+
   return <div className="space-y-6 pb-10">
     <BreadcrumbLabel label="Bank Statement Import" />
     <PageHeader eyebrow="Super Admin · Grant Reports" title="Bank Statement Import" description={`Upload the three monthly statements for Q${data.quarter} ${data.financialYear}. Files remain private and no report values are changed automatically.`} actions={<Link href={`/dashboard/super-admin/reports/${data.reportId}`}><Button variant="secondary"><ArrowLeft className="h-4 w-4" />Back to Report</Button></Link>} />
@@ -106,13 +129,13 @@ export function GrantBankImportWorkspace({ initialData }: { initialData: GrantBa
       <Summary label="Quarter" value={`Q${data.quarter} ${data.financialYear}`} />
       <Summary label="Reporting Period" value={`${displayDate(data.reportingPeriodStart)} – ${displayDate(data.reportingPeriodEnd)}`} />
       <div><p className="text-xs font-bold uppercase tracking-wide text-slate-500">Import Status</p><div className="mt-1"><StatusBadge status={formatGrantLabel(data.status)} /></div></div>
-      <Summary label="Statements Uploaded" value={`${data.statementsUploaded} / 3`} />
+      <Summary label="Statements Uploaded" value={`${data.statementsUploaded} / ${data.expectedMonths.length}`} />
     </CardContent></Card>
 
-    <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm text-brand-navy"><strong>Manual reporting remains available.</strong> These files are stored for later extraction and review. Phase 1 does not read transactions, calculate totals, or change the {reportTypeLabels[data.reportType]} report.</div>
+    <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm text-brand-navy"><strong>Review remains human-controlled.</strong> Categorising these extracted transactions does not change the {reportTypeLabels[data.reportType]} report. Original dates, descriptions, directions, amounts and duplicate-looking rows remain unchanged.</div>
 
     <div className="grid gap-5 xl:grid-cols-3">{slots.map((slot) => <StatementCard key={slot.index} slot={slot} data={data} busy={busy} editing={editing} confirmRemove={confirmRemove} setEditing={setEditing} setConfirmRemove={setConfirmRemove} onUpload={upload} onSave={saveMetadata} onRemove={remove} onExtract={extract} />)}</div>
-    {data.statements.some((statement) => statement.extractionState !== "PENDING") ? <Card className="dark:border-slate-800 dark:bg-slate-900"><CardHeader><CardTitle>Extracted Transactions</CardTitle><CardDescription>Text-based PDF transactions are shown exactly as extracted. Categorisation and duplicate review are handled in the next phase.</CardDescription></CardHeader><CardContent className="space-y-6">{data.statements.filter((statement) => statement.extractionState !== "PENDING").map((statement) => <TransactionPreview key={statement.id} statement={statement} currency={statement.currency ?? data.currency} />)}</CardContent></Card> : null}
+    {data.categorisation.total > 0 ? <TransactionReview data={data} busy={busy} onAction={categorise} /> : data.statements.some((statement) => statement.extractionState !== "PENDING") ? <Card className="dark:border-slate-800 dark:bg-slate-900"><CardHeader><CardTitle>Extracted Transactions</CardTitle><CardDescription>No financial transaction rows are available for categorisation yet.</CardDescription></CardHeader></Card> : null}
   </div>;
 }
 
@@ -130,7 +153,7 @@ function StatementCard({ slot, data, busy, editing, confirmRemove, setEditing, s
     <CardContent className="flex flex-1 flex-col space-y-4">
       {statement ? <>
         <div className="rounded-lg bg-slate-50 p-3 dark:bg-slate-800"><p className="break-all text-sm font-bold text-brand-ink dark:text-white">{statement.originalFilename}</p><p className="mt-1 text-xs text-slate-500">{fileSize(statement.fileSize)} · Stored privately</p></div>
-        {editing === statement.id ? <MetadataForm statement={statement} expectedMonth={slot.expected.value} disabled={isBusy} onCancel={() => setEditing(null)} onSave={(form) => onSave(statement.id, form)} /> : <div className="grid grid-cols-2 gap-3 text-sm"><Detail label="Statement Month" value={displayDate(statement.statementMonth)} /><Detail label="Period" value={statement.periodStart || statement.periodEnd ? `${displayDate(statement.periodStart)} – ${displayDate(statement.periodEnd)}` : "Not provided"} /><Detail label="Opening Balance" value={statement.openingBalance ? formatGrantCurrency(Number(statement.openingBalance), statement.currency ?? data.currency) : "Not provided"} /><Detail label="Closing Balance" value={statement.closingBalance ? formatGrantCurrency(Number(statement.closingBalance), statement.currency ?? data.currency) : "Not provided"} /></div>}
+        {editing === statement.id ? <MetadataForm statement={statement} expectedMonth={slot.expected.value} disabled={isBusy} onCancel={() => setEditing(null)} onSave={(form) => onSave(statement.id, form)} /> : <div className="grid grid-cols-2 gap-3 text-sm"><Detail label="Statement Month" value={displayDate(statement.statementMonth)} /><Detail label="Period" value={statement.periodStart || statement.periodEnd ? `${displayDate(statement.periodStart)} – ${displayDate(statement.periodEnd)}` : "Not provided"} /><Detail label="Opening Balance" value={statement.openingBalance ? formatGrantBankCurrency(statement.openingBalance, statement.currency ?? data.currency) : "Not provided"} /><Detail label="Closing Balance" value={statement.closingBalance ? formatGrantBankCurrency(statement.closingBalance, statement.currency ?? data.currency) : "Not provided"} /></div>}
         <ExtractionState statement={statement} processing={isBusy} />
         <div className="mt-auto flex flex-wrap gap-2"><a className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-brand-line px-3 text-sm font-bold text-brand-navy" href={`/api/grant-reports/${data.reportId}/bank-import/${data.id}/statements/${statement.id}/file?preview=1`} target="_blank" rel="noreferrer"><Eye className="h-4 w-4" />Preview</a><a className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-brand-line px-3 text-sm font-bold text-brand-navy" href={`/api/grant-reports/${data.reportId}/bank-import/${data.id}/statements/${statement.id}/file?download=1`}><Download className="h-4 w-4" />Download</a>{data.editable && ["PENDING", "FAILED"].includes(statement.extractionState) ? <Button type="button" variant="secondary" disabled={isBusy} onClick={() => void onExtract(statement.id)}><ScanText className="h-4 w-4" />{isBusy ? "Extracting…" : "Extract Transactions"}</Button> : null}{data.editable ? <><Button type="button" variant="ghost" disabled={isBusy || statement.extractionState !== "PENDING"} onClick={() => setEditing(editing === statement.id ? null : statement.id)}><Pencil className="h-4 w-4" />Edit Details</Button><Button type="button" variant="ghost" disabled={isBusy || statement.extractionState !== "PENDING"} onClick={() => inputRef.current?.click()}><FileUp className="h-4 w-4" />Replace</Button>{confirmRemove === statement.id ? <div className="flex items-center gap-2 rounded-lg bg-red-50 p-2 text-xs font-bold text-red-800"><span>Remove this statement?</span><button type="button" disabled={isBusy} className="underline" onClick={() => void onRemove(statement.id)}>Remove</button><button type="button" className="underline" onClick={() => setConfirmRemove(null)}>Cancel</button></div> : <Button type="button" variant="ghost" disabled={isBusy || statement.extractionState !== "PENDING"} onClick={() => setConfirmRemove(statement.id)}><Trash2 className="h-4 w-4" />Remove</Button>}</> : null}</div>
       </> : <div className="flex flex-1 flex-col items-center justify-center rounded-lg border border-dashed border-brand-line p-8 text-center"><Landmark className="h-8 w-8 text-slate-400" /><p className="mt-3 font-bold">No statement uploaded</p><p className="mt-1 text-sm text-slate-500">PDF, PNG, JPG or JPEG. Maximum 10 MB.</p>{data.editable ? <Button type="button" className="mt-4" disabled={isBusy} onClick={() => inputRef.current?.click()}><FileUp className="h-4 w-4" />{isBusy ? "Uploading…" : "Upload Statement"}</Button> : null}</div>}
@@ -152,6 +175,43 @@ function ExtractionState({ statement, processing }: { statement: GrantBankStatem
   return <div className="rounded-lg border border-brand-line p-3 text-sm dark:border-slate-700"><div className="flex items-center justify-between gap-2"><span className="font-bold">{label}</span>{statement.transactionsFound > 0 ? <span className="text-xs font-semibold text-slate-500">{statement.transactionsFound} found</span> : null}</div>{statement.extractionMessage ? <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">{statement.extractionMessage}</p> : null}</div>;
 }
 
-function TransactionPreview({ statement, currency }: { statement: GrantBankStatementDto; currency: string }) {
-  return <section className="space-y-3"><div><h3 className="font-bold text-brand-ink dark:text-white">{statement.originalFilename}</h3><p className="text-sm text-slate-500">{statement.extractionMessage ?? `${statement.transactionsFound} transactions found.`}</p></div>{statement.transactions.length > 0 ? <div className="overflow-x-auto"><table className="min-w-[760px] w-full text-left text-sm"><thead><tr className="border-b border-brand-line text-xs uppercase tracking-wide text-slate-500"><th className="px-3 py-2">Date</th><th className="px-3 py-2">Description</th><th className="px-3 py-2 text-right">Debit</th><th className="px-3 py-2 text-right">Credit</th><th className="px-3 py-2 text-right">Balance</th></tr></thead><tbody>{statement.transactions.map((transaction) => <tr key={transaction.id} className="border-b border-brand-line/70 dark:border-slate-800"><td className="whitespace-nowrap px-3 py-2">{displayDate(transaction.transactionDate)}</td><td className="px-3 py-2 font-medium">{transaction.description}</td><td className="whitespace-nowrap px-3 py-2 text-right">{transaction.debit ? formatGrantCurrency(Number(transaction.debit), currency) : "—"}</td><td className="whitespace-nowrap px-3 py-2 text-right">{transaction.credit ? formatGrantCurrency(Number(transaction.credit), currency) : "—"}</td><td className="whitespace-nowrap px-3 py-2 text-right">{transaction.balance ? formatGrantCurrency(Number(transaction.balance), currency) : "—"}</td></tr>)}</tbody></table></div> : <div className="rounded-lg bg-slate-50 p-4 text-sm text-slate-600 dark:bg-slate-800 dark:text-slate-300">{statement.extractionState === "PROCESSING" ? "Processing the private statement…" : statement.extractionMessage ?? "No transactions are available."}</div>}</section>;
+function TransactionReview({ data, busy, onAction }: {
+  data: GrantBankImportWorkspaceDto;
+  busy: string | null;
+  onAction: (action: { action: "suggest" | "complete" } | { action: "confirm"; transactionId: string; category: GrantBankTransactionCategory }) => Promise<void>;
+}) {
+  const hasUncategorised = data.statements.some((statement) => statement.transactions.some((transaction) => transaction.reviewStatus === "UNCATEGORISED"));
+  return <Card className="dark:border-slate-800 dark:bg-slate-900">
+    <CardHeader><div className="flex flex-wrap items-start justify-between gap-4"><div><CardTitle>Transaction Categorisation & Review</CardTitle><CardDescription>Review each extracted financial transaction. Suggestions never change the source transaction or update the report.</CardDescription></div><Badge variant={data.categorisation.complete ? "success" : "default"}>{data.categorisation.complete ? "Categorisation complete" : `${data.categorisation.reviewed} of ${data.categorisation.total} reviewed`}</Badge></div></CardHeader>
+    <CardContent className="space-y-6">
+      <div className="rounded-lg border border-brand-line p-4 dark:border-slate-700"><div className="flex flex-wrap items-center justify-between gap-3"><div><p className="font-bold">{data.categorisation.reviewed} of {data.categorisation.total} transactions reviewed</p><p className="text-sm text-slate-500">High-confidence deterministic matches count as reviewed. Other / Unclassified always requires explicit confirmation.</p></div><div className="flex flex-wrap gap-2">{hasUncategorised && data.editable ? <Button type="button" variant="secondary" disabled={Boolean(busy)} onClick={() => void onAction({ action: "suggest" })}><Sparkles className="h-4 w-4" />{busy === "categorisation-suggest" ? "Generating…" : "Generate Suggestions"}</Button> : null}<Button type="button" disabled={!data.editable || !data.categorisation.readyToComplete || Boolean(busy)} onClick={() => void onAction({ action: "complete" })}><Check className="h-4 w-4" />{busy === "categorisation-complete" ? "Completing…" : data.categorisation.complete ? "Completed" : "Complete Categorisation"}</Button></div></div><Progress className="mt-3" value={data.categorisation.percentage} /></div>
+      {data.statements.filter((statement) => statement.transactions.length > 0).map((statement) => <TransactionReviewTable key={statement.id} statement={statement} currency={statement.currency ?? data.currency} editable={data.editable} busy={busy} onConfirm={(transactionId, category) => onAction({ action: "confirm", transactionId, category })} />)}
+    </CardContent>
+  </Card>;
+}
+
+function TransactionReviewTable({ statement, currency, editable, busy, onConfirm }: {
+  statement: GrantBankStatementDto;
+  currency: string;
+  editable: boolean;
+  busy: string | null;
+  onConfirm: (transactionId: string, category: GrantBankTransactionCategory) => Promise<void>;
+}) {
+  return <section className="space-y-3"><div><h3 className="font-bold text-brand-ink dark:text-white">{statement.originalFilename}</h3><p className="text-sm text-slate-500">{statement.transactionsFound} extracted financial transactions. Source order and duplicate-looking rows are preserved.</p></div><div className="overflow-x-auto"><table className="w-full min-w-[1380px] table-fixed text-left text-xs"><colgroup><col className="w-[8%]" /><col className="w-[22%]" /><col className="w-[8%]" /><col className="w-[9%]" /><col className="w-[9%]" /><col className="w-[10%]" /><col className="w-[13%]" /><col className="w-[7%]" /><col className="w-[7%]" /><col className="w-[7%]" /></colgroup><thead><tr className="border-b border-brand-line uppercase tracking-wide text-slate-500"><th className="px-2 py-2">Date</th><th className="px-2 py-2">Original Description</th><th className="px-2 py-2">Direction</th><th className="px-2 py-2 text-right">Amount</th><th className="px-2 py-2 text-right">Balance</th><th className="px-2 py-2">Source</th><th className="px-2 py-2">Suggested Category</th><th className="px-2 py-2">Confidence</th><th className="px-2 py-2">Status</th><th className="px-2 py-2">Review</th></tr></thead><tbody>{statement.transactions.map((transaction) => <TransactionReviewRow key={`${transaction.id}-${transaction.suggestedCategory}-${transaction.confirmedCategory}`} transaction={transaction} statementName={statement.originalFilename} currency={currency} editable={editable} busy={busy === transaction.id} onConfirm={onConfirm} />)}</tbody></table></div></section>;
+}
+
+function TransactionReviewRow({ transaction, statementName, currency, editable, busy, onConfirm }: {
+  transaction: GrantBankStatementDto["transactions"][number];
+  statementName: string;
+  currency: string;
+  editable: boolean;
+  busy: boolean;
+  onConfirm: (transactionId: string, category: GrantBankTransactionCategory) => Promise<void>;
+}) {
+  const [category, setCategory] = useState<GrantBankTransactionCategory | "">(transaction.confirmedCategory ?? transaction.suggestedCategory ?? "");
+  const direction = transaction.debit ? "Debit" : "Credit";
+  const amount = transaction.debit ?? transaction.credit ?? "0.00";
+  const sourcePosition = [transaction.sourcePage ? `Page ${transaction.sourcePage}` : null, transaction.sourceRow ? `row ${transaction.sourceRow}` : null].filter(Boolean).join(" · ");
+  const badgeVariant = transaction.reviewStatus === "CONFIRMED" ? "success" : transaction.reviewStatus === "NEEDS_REVIEW" ? "warning" : "muted";
+  return <tr className="border-b border-brand-line/70 align-top dark:border-slate-800"><td className="whitespace-nowrap px-2 py-3">{displayDate(transaction.transactionDate)}</td><td className="break-words px-2 py-3 font-medium">{transaction.description}</td><td className="px-2 py-3"><Badge variant={direction === "Credit" ? "success" : "muted"}>{direction}</Badge></td><td className="whitespace-nowrap px-2 py-3 text-right font-semibold tabular-nums">{formatGrantBankCurrency(amount, currency)}</td><td className="whitespace-nowrap px-2 py-3 text-right tabular-nums">{transaction.balance ? formatGrantBankCurrency(transaction.balance, currency) : "—"}</td><td className="break-words px-2 py-3"><span className="font-medium">{statementName}</span><br /><span className="text-slate-500">{sourcePosition || "Source position unavailable"}</span></td><td className="px-2 py-3">{transaction.suggestedCategory ?? "—"}</td><td className="px-2 py-3">{transaction.suggestedConfidence === null ? "—" : `${Math.round(transaction.suggestedConfidence * 100)}%`}</td><td className="px-2 py-3"><Badge variant={badgeVariant}>{formatGrantLabel(transaction.reviewStatus)}</Badge></td><td className="space-y-2 px-2 py-3"><select aria-label={`Category for ${transaction.description}`} className="w-full rounded-md border border-brand-line bg-white px-2 py-2 text-xs outline-none focus:border-brand-navy dark:border-slate-700 dark:bg-slate-950" value={category} disabled={!editable || busy} onChange={(event) => setCategory(isGrantBankTransactionCategory(event.target.value) ? event.target.value : "")}><option value="">Select category</option>{grantBankTransactionCategories.map((option) => <option key={option.value} value={option.value}>{option.value}</option>)}</select><Button type="button" className="min-h-8 w-full px-2 py-1 text-xs" disabled={!editable || busy || !category} onClick={() => category && void onConfirm(transaction.id, category)}>{busy ? "Saving…" : transaction.reviewStatus === "CONFIRMED" ? "Update" : "Confirm"}</Button></td></tr>;
 }

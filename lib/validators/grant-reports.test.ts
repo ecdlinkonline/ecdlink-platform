@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createGrantAwardSchema, createGrantReportingObligationSchema, saveGrantReportBeneficiariesSchema, saveGrantReportCertificationsSchema, saveGrantReportFinancialSchema, saveQuarterlyBankReconciliationSchema, saveQuarterlyCashFlowExpensesSchema, saveQuarterlyCashFlowGeneralSchema, saveQuarterlyCashReceivedSchema, saveQuarterlyExpenditureGeneralSchema, saveQuarterlyExpenditureSchema, saveQuarterlyIncomeSchema } from "./grant-reports";
+import { grantBankCategorisationActionSchema } from "./grant-bank-imports";
 
 const award = {
   sourceType: "MANUAL", centreId: "centre-1", fundingProjectId: "project-1", awardNumber: "AW-001", title: "Nutrition grant",
@@ -32,14 +33,14 @@ test("signed agreement metadata is optional and valid dates and signature state 
 test("obligation basis-specific requirements are enforced", () => {
   const base = { grantAwardId: "award-1", type: "CUSTOM", title: "Quarter one", dueAt: "2026-10-01" };
   assert.equal(createGrantReportingObligationSchema.safeParse({ ...base, basis: "QUARTER" }).success, false);
-  assert.equal(createGrantReportingObligationSchema.safeParse({ ...base, basis: "QUARTER", financialYear: "2026", quarter: 1, reportingPeriodStart: "2026-01-01", reportingPeriodEnd: "2026-03-31" }).success, true);
+  assert.equal(createGrantReportingObligationSchema.safeParse({ ...base, basis: "QUARTER", financialYear: "2026", quarter: 1, reportingPeriodStart: "2026-04-01", reportingPeriodEnd: "2026-06-30" }).success, true);
   assert.equal(createGrantReportingObligationSchema.safeParse({ ...base, basis: "TRANCHE" }).success, false);
   assert.equal(createGrantReportingObligationSchema.safeParse({ ...base, basis: "TRANCHE", grantTrancheId: "tranche-1" }).success, true);
   assert.equal(createGrantReportingObligationSchema.safeParse({ ...base, basis: "FINAL" }).success, false);
 });
 
 test("standard report types reject inconsistent hidden basis values", () => {
-  const period = { grantAwardId: "award-1", title: "Report", reportingPeriodStart: "2026-01-01", reportingPeriodEnd: "2026-03-31", dueAt: "2026-04-15" };
+  const period = { grantAwardId: "award-1", title: "Report", reportingPeriodStart: "2026-04-01", reportingPeriodEnd: "2026-06-30", dueAt: "2026-07-15" };
   assert.equal(createGrantReportingObligationSchema.safeParse({ ...period, type: "INTERIM", basis: "QUARTER", financialYear: "2026", quarter: 1 }).success, false);
   assert.equal(createGrantReportingObligationSchema.safeParse({ ...period, type: "FINAL", basis: "FINAL" }).success, false);
   assert.equal(createGrantReportingObligationSchema.safeParse({ ...period, type: "QUARTERLY_EXPENDITURE", basis: "QUARTER", financialYear: "2026", quarter: 1 }).success, true);
@@ -65,7 +66,8 @@ test("certification confirmation requires a date and financial amounts remain de
 });
 
 test("quarterly general and bank sections validate required period data and decimal balances", () => {
-  assert.equal(saveQuarterlyExpenditureGeneralSchema.safeParse({ section: "quarterly_general", data: { financialYear: "2026", quarter: 1, reportingPeriodStart: "2026-01-01", reportingPeriodEnd: "2026-03-31" } }).success, true);
+  assert.equal(saveQuarterlyExpenditureGeneralSchema.safeParse({ section: "quarterly_general", data: { financialYear: "2026", quarter: 1, reportingPeriodStart: "2026-04-01", reportingPeriodEnd: "2026-06-30" } }).success, true);
+  assert.equal(saveQuarterlyExpenditureGeneralSchema.safeParse({ section: "quarterly_general", data: { financialYear: "2026", quarter: 1, reportingPeriodStart: "2026-04-01", reportingPeriodEnd: "2026-04-08" } }).success, false);
   assert.equal(saveQuarterlyExpenditureGeneralSchema.safeParse({ section: "quarterly_general", data: { financialYear: "", quarter: 5, reportingPeriodStart: "2026-04-01", reportingPeriodEnd: "2026-03-31" } }).success, false);
   assert.equal(saveQuarterlyBankReconciliationSchema.safeParse({ section: "bank_reconciliation", data: { openingBankBalance: "100.10", closingBankBalance: "200.20" } }).success, true);
   assert.equal(saveQuarterlyBankReconciliationSchema.safeParse({ section: "bank_reconciliation", data: { openingBankBalance: "-1.00", closingBankBalance: null } }).success, false);
@@ -87,7 +89,7 @@ test("quarterly expenditure validates framework percentages, source splits, tota
 });
 
 test("quarterly cash flow validates general information and cash totals", () => {
-  assert.equal(saveQuarterlyCashFlowGeneralSchema.safeParse({ section: "cash_flow_general", data: { financialYear: "2026", quarter: 1, reportingPeriodStart: "2026-01-01", reportingPeriodEnd: "2026-03-31" } }).success, true);
+  assert.equal(saveQuarterlyCashFlowGeneralSchema.safeParse({ section: "cash_flow_general", data: { financialYear: "2026", quarter: 1, reportingPeriodStart: "2026-04-01", reportingPeriodEnd: "2026-06-30" } }).success, true);
   const rows = [{ lineType: "FUNDING_RECEIVED", categoryName: "Subsidy", amount: "900.10" }, { lineType: "OTHER_INCOME", categoryName: "Other Income", amount: "99.90" }];
   assert.equal(saveQuarterlyCashReceivedSchema.safeParse({ section: "cash_received", data: { rows, totalCashAvailable: "1000.00" } }).success, true);
   assert.equal(saveQuarterlyCashReceivedSchema.safeParse({ section: "cash_received", data: { rows, totalCashAvailable: "999.99" } }).success, false);
@@ -100,4 +102,12 @@ test("quarterly cash flow validates expense variance, totals and remaining cash"
   assert.equal(saveQuarterlyCashFlowExpensesSchema.safeParse({ ...valid, data: { ...valid.data, rows: [{ ...row, variance: "49.89" }] } }).success, false);
   assert.equal(saveQuarterlyCashFlowExpensesSchema.safeParse({ ...valid, data: { ...valid.data, remainingCash: "549.89" } }).success, false);
   assert.equal(saveQuarterlyCashFlowExpensesSchema.safeParse({ ...valid, data: { ...valid.data, rows: [{ ...row, reasonForVariance: "x".repeat(2001) }] } }).success, false);
+});
+
+test("bank categorisation actions accept only controlled categories and action shapes", () => {
+  assert.equal(grantBankCategorisationActionSchema.safeParse({ action: "suggest" }).success, true);
+  assert.equal(grantBankCategorisationActionSchema.safeParse({ action: "complete" }).success, true);
+  assert.equal(grantBankCategorisationActionSchema.safeParse({ action: "confirm", transactionId: "clz1234567890abcdefghijk", category: "Bank Charges" }).success, true);
+  assert.equal(grantBankCategorisationActionSchema.safeParse({ action: "confirm", transactionId: "clz1234567890abcdefghijk", category: "Invented Category" }).success, false);
+  assert.equal(grantBankCategorisationActionSchema.safeParse({ action: "confirm", transactionId: "not-an-id", category: "Transport" }).success, false);
 });
