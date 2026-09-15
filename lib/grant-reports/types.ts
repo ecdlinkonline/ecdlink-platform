@@ -16,3 +16,11 @@ export function formatGrantLabel(value: string) {
 export function formatGrantCurrency(value: number, currency = "ZAR") {
   return new Intl.NumberFormat("en-ZA", { style: "currency", currency, maximumFractionDigits: 0 }).format(value);
 }
+
+export function formatGrantReconciliationCurrency(value: string | number, currency = "ZAR") {
+  const numericValue = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numericValue)) return "—";
+  const amount = new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Math.abs(numericValue));
+  const sign = numericValue < 0 ? "-" : "";
+  return currency.toUpperCase() === "ZAR" ? `${sign}R${amount}` : `${sign}${currency.toUpperCase()} ${amount}`;
+}

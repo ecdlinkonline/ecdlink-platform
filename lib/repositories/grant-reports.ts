@@ -3,6 +3,7 @@ import "server-only";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { buildSuggestedGrantIndicators, dbeQuarterlyCashFlowExpenseCategories, dbeQuarterlyExpenditureCategories, grantReportCompletion, mapQuarterlyExpenditureIncomeToCashReceived, quarterlyCashFlowCompletion, quarterlyCashFlowTotals, quarterlyExpenditureCompletion, resolveGrantReportTemplate } from "@/lib/grant-reports/editor";
+import { buildFinancialReconciliation } from "@/lib/grant-reports/financial-reconciliation";
 import type { GrantReportFiltersInput } from "@/lib/validators/grant-reports";
 
 export function withGrantReportingTransaction<T>(operation: (tx: Prisma.TransactionClient) => Promise<T>) {
@@ -312,7 +313,31 @@ export async function getGrantReportEditor(reportId: string) {
       beneficiaryBreakdowns: { orderBy: [{ displayOrder: "asc" }, { createdAt: "asc" }] },
       racialProfileRows: { orderBy: [{ displayOrder: "asc" }, { createdAt: "asc" }] },
       sustainabilityItems: { orderBy: [{ displayOrder: "asc" }, { createdAt: "asc" }] },
-      financialLines: { orderBy: [{ displayOrder: "asc" }, { createdAt: "asc" }] },
+      financialLines: {
+        orderBy: [{ displayOrder: "asc" }, { createdAt: "asc" }],
+        include: {
+          bankTransactionSources: {
+            orderBy: { appliedAt: "asc" },
+            include: {
+              transaction: {
+                select: {
+                  id: true,
+                  transactionDate: true,
+                  originalDescription: true,
+                  originalAmount: true,
+                  direction: true,
+                  runningBalance: true,
+                  sourcePage: true,
+                  sourceRow: true,
+                  confirmedCategory: true,
+                  statement: { select: { id: true, statementMonth: true, periodStart: true, periodEnd: true, file: { select: { originalFilename: true } } } },
+                  batch: { select: { id: true, status: true, originatingGrantReportId: true, grantAwardId: true, centreId: true, financialYear: true, quarter: true } },
+                },
+              },
+            },
+          },
+        },
+      },
       certifications: { include: { confirmedBy: { select: { firstName: true, lastName: true, email: true } } }, orderBy: [{ displayOrder: "asc" }, { createdAt: "asc" }] },
       documents: { include: { file: { select: { originalFilename: true, mimeType: true, fileSize: true, createdAt: true } }, indicator: { select: { id: true, objective: true } }, uploadedBy: { select: { firstName: true, lastName: true, email: true } } }, orderBy: { uploadedAt: "desc" } },
     },
@@ -352,6 +377,42 @@ export async function getGrantReportEditor(reportId: string) {
       { lineType: "FUNDING_RECEIVED" as const, categoryName: "Subsidy", amount: null },
       { lineType: "OTHER_INCOME" as const, categoryName: "Other Income", amount: null },
     ];
+  const reconciliationImports = version.reportType === "QUARTERLY_CASH_FLOW" && cashFlowFinancialYear && cashFlowQuarter
+    ? await prisma.grantBankImportBatch.findMany({
+      where: { originatingGrantReportId: report.id, grantAwardId: report.award.id, centreId: report.award.centre.id, financialYear: cashFlowFinancialYear, quarter: cashFlowQuarter },
+      select: {
+        id: true,
+        status: true,
+        statements: {
+          select: {
+            id: true,
+            statementMonth: true,
+            periodStart: true,
+            periodEnd: true,
+            openingBalance: true,
+            closingBalance: true,
+            transactions: { select: { direction: true, originalAmount: true } },
+          },
+        },
+      },
+    })
+    : [];
+  const financialReconciliation = version.reportType === "QUARTERLY_CASH_FLOW" ? buildFinancialReconciliation({
+    reportId: report.id,
+    awardId: report.award.id,
+    centreId: report.award.centre.id,
+    financialYear: cashFlowFinancialYear,
+    quarter: cashFlowQuarter,
+    reportingPeriodStart: periodStart,
+    reportingPeriodEnd: periodEnd,
+    openingCashBalance: version.openingBankBalance,
+    storedFundingReceivedTotal: version.fundingReceivedTotal,
+    storedOtherIncomeTotal: version.otherIncomeTotal,
+    storedTotalIncome: version.totalIncome,
+    storedTotalExpenditure: version.totalExpenditure,
+    financialLines: version.financialLines,
+    imports: reconciliationImports,
+  }) : null;
 
   const documents = version.documents.map((document) => ({
     id: document.id,
@@ -465,6 +526,7 @@ export async function getGrantReportEditor(reportId: string) {
       totals: {
         ...quarterlyCashFlowTotals(cashFlowIncomeRows.map((row) => row.amount), expenditureLines.map((row) => ({ quarterlyBudget: decimalString(row.quarterlyBudget), estimatedExpenditure: decimalString(row.estimatedExpenditure) }))),
       },
+      financialReconciliation,
     },
     documents,
     certifications: version.certifications.map((row) => ({ id: row.id, party: row.party, nameSnapshot: row.nameSnapshot, designationSnapshot: row.designationSnapshot, certificationDate: dateValue(row.certificationDate), digitallyConfirmed: row.digitallyConfirmed, confirmedAt: dateValue(row.confirmedAt), confirmedBy: row.confirmedBy ? [row.confirmedBy.firstName, row.confirmedBy.lastName].filter(Boolean).join(" ") || row.confirmedBy.email || "Internal user" : null })),
