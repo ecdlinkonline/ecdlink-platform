@@ -2,13 +2,13 @@
 
 import Link from "next/link";
 import { useRef, useState } from "react";
-import { ArrowLeft, Check, Download, Eye, FileUp, Landmark, Pencil, ScanText, Sparkles, Trash2 } from "lucide-react";
+import { ArrowLeft, Check, Download, Eye, FileUp, Landmark, Pencil, ReceiptText, ScanText, Sparkles, Trash2 } from "lucide-react";
 import { BreadcrumbLabel } from "@/components/app-shell/breadcrumb-label";
 import { Badge, PageHeader, Progress, StatusBadge, useToast } from "@/components/design-system";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatGrantLabel, reportTypeLabels } from "@/lib/grant-reports/types";
-import { formatGrantBankCurrency, type GrantBankImportWorkspaceDto, type GrantBankStatementDto } from "@/lib/grant-reports/bank-import";
+import { formatGrantBankCurrency, type GrantBankImportWorkspaceDto, type GrantBankPostingPreviewDto, type GrantBankStatementDto } from "@/lib/grant-reports/bank-import";
 import { grantBankTransactionCategories, isGrantBankTransactionCategory, type GrantBankTransactionCategory } from "@/lib/grant-reports/bank-transaction-categorisation";
 
 const inputClass = "mt-1 w-full rounded-lg border border-brand-line bg-white px-3 py-2 text-sm text-brand-ink outline-none focus:border-brand-navy disabled:cursor-not-allowed disabled:bg-slate-100 dark:border-slate-700 dark:bg-slate-950 dark:text-white";
@@ -37,6 +37,7 @@ export function GrantBankImportWorkspace({ initialData }: { initialData: GrantBa
   const [busy, setBusy] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
+  const [posting, setPosting] = useState<GrantBankPostingPreviewDto | null>(null);
   const slots = assignStatementSlots(data);
 
   async function upload(slot: (typeof slots)[number], file: File, replaceStatementId?: string) {
@@ -119,6 +120,45 @@ export function GrantBankImportWorkspace({ initialData }: { initialData: GrantBa
     } finally { setBusy(null); }
   }
 
+  async function reviewPosting() {
+    setBusy("posting-preview");
+    try {
+      const response = await fetch(`/api/grant-reports/${data.reportId}/bank-import/${data.id}/posting`, { cache: "no-store" });
+      const result = await response.json();
+      if (!response.ok || !result.ok) throw new Error(result.error ?? "The posting preview could not be loaded.");
+      setPosting(result.data);
+    } catch (error) {
+      pushToast({ title: "Posting preview unavailable", description: error instanceof Error ? error.message : "The posting preview could not be loaded." });
+    } finally { setBusy(null); }
+  }
+
+  async function postTransactions() {
+    setBusy("posting-submit");
+    try {
+      const response = await fetch(`/api/grant-reports/${data.reportId}/bank-import/${data.id}/posting`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "post" }) });
+      const result = await response.json();
+      if (!response.ok || !result.ok) throw new Error(result.error ?? "The confirmed transactions could not be posted.");
+      setPosting(result.data);
+      setData((current) => ({ ...current, status: "CONFIRMED" }));
+      pushToast({ title: "Transactions posted", description: "Confirmed transactions were added to this report version with source links. Manual report lines were left unchanged." });
+    } catch (error) {
+      pushToast({ title: "Posting failed", description: error instanceof Error ? error.message : "The confirmed transactions could not be posted." });
+    } finally { setBusy(null); }
+  }
+
+  async function returnToCategorisation() {
+    setBusy("posting-return");
+    try {
+      const response = await fetch(`/api/grant-reports/${data.reportId}/bank-import/${data.id}/posting`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "return_to_categorisation" }) });
+      const result = await response.json();
+      if (!response.ok || !result.ok) throw new Error(result.error ?? "The bank import could not return to categorisation.");
+      setData(result.data); setPosting(null);
+      pushToast({ title: "Returned to categorisation", description: "Update the confirmed category, complete categorisation again, then review posting." });
+    } catch (error) {
+      pushToast({ title: "Action failed", description: error instanceof Error ? error.message : "The bank import could not return to categorisation." });
+    } finally { setBusy(null); }
+  }
+
   return <div className="space-y-6 pb-10">
     <BreadcrumbLabel label="Bank Statement Import" />
     <PageHeader eyebrow="Super Admin · Grant Reports" title="Bank Statement Import" description={`Upload the three monthly statements for Q${data.quarter} ${data.financialYear}. Files remain private and no report values are changed automatically.`} actions={<Link href={`/dashboard/super-admin/reports/${data.reportId}`}><Button variant="secondary"><ArrowLeft className="h-4 w-4" />Back to Report</Button></Link>} />
@@ -136,8 +176,20 @@ export function GrantBankImportWorkspace({ initialData }: { initialData: GrantBa
 
     <div className="grid gap-5 xl:grid-cols-3">{slots.map((slot) => <StatementCard key={slot.index} slot={slot} data={data} busy={busy} editing={editing} confirmRemove={confirmRemove} setEditing={setEditing} setConfirmRemove={setConfirmRemove} onUpload={upload} onSave={saveMetadata} onRemove={remove} onExtract={extract} />)}</div>
     {data.categorisation.total > 0 ? <TransactionReview data={data} busy={busy} onAction={categorise} /> : data.statements.some((statement) => statement.extractionState !== "PENDING") ? <Card className="dark:border-slate-800 dark:bg-slate-900"><CardHeader><CardTitle>Extracted Transactions</CardTitle><CardDescription>No financial transaction rows are available for categorisation yet.</CardDescription></CardHeader></Card> : null}
+    {["READY_FOR_CONFIRMATION", "CONFIRMED"].includes(data.status) ? <Card className="dark:border-slate-800 dark:bg-slate-900"><CardHeader><div className="flex flex-wrap items-start justify-between gap-4"><div><CardTitle>Cash Flow Posting</CardTitle><CardDescription>Review the accounting treatment before any confirmed transaction affects this report version.</CardDescription></div><Button type="button" variant="secondary" disabled={Boolean(busy)} onClick={() => void reviewPosting()}><ReceiptText className="h-4 w-4" />{busy === "posting-preview" ? "Loading…" : posting ? "Refresh Posting Review" : "Review Posting"}</Button></div></CardHeader>{posting ? <CardContent><PostingReview preview={posting} busy={busy} onPost={postTransactions} onReturn={returnToCategorisation} /></CardContent> : null}</Card> : null}
   </div>;
 }
+
+function PostingReview({ preview, busy, onPost, onReturn }: { preview: GrantBankPostingPreviewDto; busy: string | null; onPost: () => Promise<void>; onReturn: () => Promise<void> }) {
+  return <div className="space-y-5">
+    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5"><PostingTotal label="Confirmed Credits" value={formatGrantBankCurrency(preview.totals.confirmedCredits, preview.currency)} /><PostingTotal label="Confirmed Debits" value={formatGrantBankCurrency(preview.totals.confirmedDebits, preview.currency)} /><PostingTotal label="Proposed Cash Received" value={formatGrantBankCurrency(preview.totals.proposedCashReceived, preview.currency)} /><PostingTotal label="Proposed Expenses" value={formatGrantBankCurrency(preview.totals.proposedOperatingExpenses, preview.currency)} /><PostingTotal label="Net Movement" value={formatGrantBankCurrency(preview.totals.netMovement, preview.currency)} /></div>
+    {preview.totals.unmapped > 0 ? <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm font-semibold text-amber-900">{preview.totals.unmapped} transaction{preview.totals.unmapped === 1 ? "" : "s"} need an accounting decision. Posting is blocked.</p> : null}
+    <div className="overflow-x-auto"><table className="w-full min-w-[1050px] table-fixed text-left text-xs"><colgroup><col className="w-[9%]" /><col className="w-[25%]" /><col className="w-[8%]" /><col className="w-[10%]" /><col className="w-[14%]" /><col className="w-[14%]" /><col className="w-[20%]" /></colgroup><thead><tr className="border-b border-brand-line uppercase tracking-wide text-slate-500"><th className="p-2">Date</th><th className="p-2">Original Description</th><th className="p-2">Direction</th><th className="p-2 text-right">Amount</th><th className="p-2">Confirmed Category</th><th className="p-2">Proposed Treatment</th><th className="p-2">Source</th></tr></thead><tbody>{preview.rows.map((row) => <tr key={row.transactionId} className="border-b border-brand-line/70 align-top dark:border-slate-800"><td className="whitespace-nowrap p-2">{displayDate(row.transactionDate)}</td><td className="break-words p-2 font-medium">{row.description}</td><td className="p-2"><Badge variant={row.direction === "CREDIT" ? "success" : "muted"}>{formatGrantLabel(row.direction)}</Badge></td><td className="whitespace-nowrap p-2 text-right font-semibold tabular-nums">{formatGrantBankCurrency(row.amount, preview.currency)}</td><td className="p-2">{row.confirmedCategory}</td><td className="p-2"><Badge variant={row.safe ? "success" : "warning"}>{row.treatment === "CASH_RECEIVED" ? "Cash Received" : row.treatment === "OPERATING_EXPENSE" ? "Operating Expense" : "Needs Posting Review"}</Badge>{row.reportCategory ? <p className="mt-1 text-slate-500">{row.reportCategory}</p> : null}{row.reason ? <p className="mt-1 text-amber-800">{row.reason}</p> : null}</td><td className="break-words p-2"><span className="font-medium">{row.statementName}</span><br /><span className="text-slate-500">{[row.sourcePage ? `Page ${row.sourcePage}` : null, row.sourceRow ? `row ${row.sourceRow}` : null].filter(Boolean).join(" · ") || "Source position unavailable"}</span></td></tr>)}</tbody></table></div>
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-brand-line p-4 dark:border-slate-700"><p className="max-w-2xl text-sm text-slate-600 dark:text-slate-300">Posting creates separate bank-sourced cash-flow lines and immutable source links. Existing manual report lines are not replaced.</p><div className="flex flex-wrap gap-2">{preview.totals.unmapped > 0 && !preview.posted ? <Button type="button" variant="secondary" disabled={Boolean(busy)} onClick={() => void onReturn()}>{busy === "posting-return" ? "Returning…" : "Return to Categorisation"}</Button> : null}<Button type="button" disabled={!preview.canPost || Boolean(busy) || preview.posted} onClick={() => void onPost()}><Check className="h-4 w-4" />{busy === "posting-submit" ? "Posting…" : preview.posted ? "Posted" : "Post to Cash Flow Report"}</Button></div></div>
+  </div>;
+}
+
+function PostingTotal({ label, value }: { label: string; value: string }) { return <div className="rounded-lg bg-slate-50 p-3 dark:bg-slate-800"><p className="text-xs font-bold uppercase tracking-wide text-slate-500">{label}</p><p className="mt-1 font-bold tabular-nums text-brand-ink dark:text-white">{value}</p></div>; }
 
 function StatementCard({ slot, data, busy, editing, confirmRemove, setEditing, setConfirmRemove, onUpload, onSave, onRemove, onExtract }: {
   slot: ReturnType<typeof assignStatementSlots>[number]; data: GrantBankImportWorkspaceDto; busy: string | null; editing: string | null; confirmRemove: string | null;

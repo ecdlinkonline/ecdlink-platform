@@ -2,10 +2,11 @@ import "server-only";
 
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
-import { assertGrantBankImportCapacity, expectedGrantBankStatementMonths, grantBankImportMatchesContext, hasCompleteGrantBankStatementCoverage, isEditableGrantBankImportStatus, isGrantBankImportReportType, type GrantBankImportWorkspaceDto } from "@/lib/grant-reports/bank-import";
+import { assertGrantBankImportCapacity, expectedGrantBankStatementMonths, grantBankImportMatchesContext, hasCompleteGrantBankStatementCoverage, isEditableGrantBankImportStatus, isGrantBankImportReportType, type GrantBankImportWorkspaceDto, type GrantBankPostingPreviewDto } from "@/lib/grant-reports/bank-import";
 import { bankStatementExtractor, BankStatementExtractionError, bankTransactionFingerprint } from "@/lib/grant-reports/bank-statement-extraction";
 import { buildAutomaticGrantBankTransactionConfirmation, buildGrantBankTransactionReviewUpdate, categorisationPresentationStatus, categorisationProgress, grantBankTransactionCategoriser, isGrantBankTransactionCategory, shouldAutoConfirmGrantBankSuggestion, shouldAutoConfirmPersistedGrantBankSuggestion, type GrantBankTransactionCategory } from "@/lib/grant-reports/bank-transaction-categorisation";
-import { findActiveSuperAdmin, findConfirmedGrantBankImport, findEditableGrantBankImport, findGrantBankImport, findGrantBankReportContext, findGrantBankStatementForAccess, grantBankImportIdentitySelect, type GrantBankImportRecord } from "@/lib/repositories/grant-bank-imports";
+import { calculateGrantBankPostingTotals, mapConfirmedTransactionToCashFlow } from "@/lib/grant-reports/bank-transaction-posting";
+import { findActiveSuperAdmin, findConfirmedGrantBankImport, findEditableGrantBankImport, findGrantBankImport, findGrantBankReportContext, findGrantBankStatementForAccess, findGrantBankTransactionSources, grantBankImportIdentitySelect, type GrantBankImportRecord } from "@/lib/repositories/grant-bank-imports";
 import { storage } from "@/lib/storage/storage-service";
 import type { SignedFileAccess } from "@/lib/storage/types";
 import { defaultDocumentPolicy, type StorageUploadFile } from "@/lib/storage/validation";
@@ -552,4 +553,147 @@ export async function completeGrantBankTransactionCategorisation(input: { report
     if (!updated) throw new GrantBankImportError("The bank import could not be reloaded.", 500);
     return toWorkspaceDto(updated, context.version.reportType, reportIsEditable(context));
   }, { timeout: 15_000 });
+}
+
+function buildGrantBankPostingPreview(
+  batch: GrantBankImportRecord,
+  context: ReportContext,
+  postedTransactionIds: ReadonlySet<string>,
+): GrantBankPostingPreviewDto {
+  const rows = batch.statements.flatMap((statement) => statement.transactions.map((transaction) => {
+    if (transaction.reviewStatus !== "REVIEWED" || !transaction.confirmedType || !transaction.confirmedCategory) {
+      throw new GrantBankImportError("Every bank transaction must be confirmed before posting can be reviewed.", 409);
+    }
+    const mapping = mapConfirmedTransactionToCashFlow({ direction: transaction.direction, confirmedType: transaction.confirmedType, confirmedCategory: transaction.confirmedCategory });
+    return {
+      transactionId: transaction.id,
+      statementId: statement.id,
+      statementName: statement.file.originalFilename,
+      transactionDate: dateOnly(transaction.transactionDate)!,
+      description: transaction.originalDescription,
+      direction: transaction.direction,
+      amount: transaction.originalAmount.toFixed(2),
+      runningBalance: transaction.runningBalance?.toFixed(2) ?? null,
+      sourcePage: transaction.sourcePage,
+      sourceRow: transaction.sourceRow,
+      confirmedType: transaction.confirmedType,
+      confirmedCategory: transaction.confirmedCategory,
+      ...mapping,
+    };
+  }));
+  const totals = calculateGrantBankPostingTotals(rows.map((row) => ({ direction: row.direction, amount: new Prisma.Decimal(row.amount), mapping: row })));
+  const posted = rows.length > 0 && rows.every((row) => postedTransactionIds.has(row.transactionId));
+  return {
+    reportId: context.id,
+    importId: batch.id,
+    versionId: context.version.id,
+    currency: batch.currency,
+    status: batch.status,
+    posted,
+    canPost: batch.status === "READY_FOR_CONFIRMATION" && rows.length > 0 && totals.unmapped === 0 && postedTransactionIds.size === 0 && reportIsEditable(context),
+    rows,
+    totals: {
+      confirmedCredits: totals.confirmedCredits.toFixed(2),
+      confirmedDebits: totals.confirmedDebits.toFixed(2),
+      proposedCashReceived: totals.proposedCashReceived.toFixed(2),
+      proposedOperatingExpenses: totals.proposedOperatingExpenses.toFixed(2),
+      netMovement: totals.netMovement.toFixed(2),
+      unmapped: totals.unmapped,
+    },
+  };
+}
+
+async function loadGrantBankPostingContext(tx: Prisma.TransactionClient, input: { reportId: string; importId: string; actorUserId: string }) {
+  const context = await requireActorAndContext(tx, input.actorUserId, input.reportId);
+  if (context.version.reportType !== "QUARTERLY_CASH_FLOW") throw new GrantBankImportError("Bank transactions can be posted only to a Quarterly Cash Flow report.", 422);
+  const batch = await findGrantBankImport(tx, input.reportId, input.importId);
+  if (!batch) throw new GrantBankImportError("Bank statement import not found.", 404);
+  assertGrantBankImportAlignment(batch, context);
+  if (!["READY_FOR_CONFIRMATION", "CONFIRMED"].includes(batch.status)) throw new GrantBankImportError("Complete transaction categorisation before reviewing report posting.", 409);
+  const sources = await findGrantBankTransactionSources(tx, context.version.id);
+  return { context, batch, sources };
+}
+
+export async function getGrantBankPostingPreview(input: { reportId: string; importId: string; actorUserId: string }) {
+  const { context, batch, sources } = await loadGrantBankPostingContext(prisma, input);
+  return buildGrantBankPostingPreview(batch, context, new Set(sources.map((source) => source.grantBankTransactionId)));
+}
+
+export async function postGrantBankTransactionsToCashFlow(
+  input: { reportId: string; importId: string; actorUserId: string },
+  client: Pick<typeof prisma, "$transaction"> = prisma,
+) {
+  return client.$transaction(async (tx) => {
+    const { context, batch, sources } = await loadGrantBankPostingContext(tx, input);
+    const preview = buildGrantBankPostingPreview(batch, context, new Set(sources.map((source) => source.grantBankTransactionId)));
+    if (preview.posted && batch.status === "CONFIRMED") return preview;
+    if (batch.status !== "READY_FOR_CONFIRMATION") throw new GrantBankImportError("This bank import is not ready to post.", 409);
+    if (!reportIsEditable(context)) throw new GrantBankImportError("The current report version is no longer editable.", 409);
+    if (sources.length > 0) throw new GrantBankImportError("Some bank transactions are already linked to this report version. No partial repost was performed.", 409);
+    if (!preview.canPost) throw new GrantBankImportError("Resolve every posting review item before posting to the report.", 409);
+
+    const groups = new Map<string, typeof preview.rows>();
+    for (const row of preview.rows) {
+      const key = `${row.lineType}:${row.reportCategory}`;
+      groups.set(key, [...(groups.get(key) ?? []), row]);
+    }
+    const lastLine = await tx.grantReportFinancialLine.findFirst({ where: { grantReportVersionId: context.version.id }, orderBy: { displayOrder: "desc" }, select: { displayOrder: true } });
+    let displayOrder = (lastLine?.displayOrder ?? -1) + 1;
+    for (const rows of groups.values()) {
+      const first = rows[0];
+      if (!first.lineType || !first.reportCategory) throw new GrantBankImportError("A posting group is missing its report mapping.", 409);
+      const amount = rows.reduce((total, row) => total.plus(row.amount), new Prisma.Decimal(0));
+      const expenditure = first.lineType === "EXPENDITURE";
+      const line = await tx.grantReportFinancialLine.create({
+        data: {
+          grantReportVersionId: context.version.id,
+          lineType: first.lineType,
+          categoryCode: `BANK_IMPORT:${batch.id}:${first.lineType}:${first.reportCategory}`,
+          categoryName: first.reportCategory,
+          description: "Posted from confirmed bank statement transactions.",
+          displayOrder: displayOrder++,
+          quarterlyActual: amount,
+          estimatedExpenditure: expenditure ? amount : null,
+          variance: expenditure ? amount.negated() : null,
+          reasonForVariance: expenditure ? "Actual expenditure posted from confirmed bank transactions; quarterly budget remains unchanged." : null,
+        },
+        select: { id: true },
+      });
+      await tx.grantReportBankTransactionSource.createMany({ data: rows.map((row) => ({
+        grantReportVersionId: context.version.id,
+        grantReportFinancialLineId: line.id,
+        grantBankTransactionId: row.transactionId,
+        appliedAmount: row.amount,
+        transactionTypeSnapshot: row.confirmedType,
+        categorySnapshot: row.confirmedCategory,
+        descriptionSnapshot: row.description,
+        appliedByUserId: input.actorUserId,
+      })) });
+    }
+
+    const financialLines = await tx.grantReportFinancialLine.findMany({ where: { grantReportVersionId: context.version.id }, select: { lineType: true, quarterlyActual: true, estimatedExpenditure: true } });
+    const fundingReceivedTotal = financialLines.filter((line) => line.lineType === "FUNDING_RECEIVED").reduce((sum, line) => sum.plus(line.quarterlyActual ?? 0), new Prisma.Decimal(0));
+    const otherIncomeTotal = financialLines.filter((line) => line.lineType === "OTHER_INCOME").reduce((sum, line) => sum.plus(line.quarterlyActual ?? 0), new Prisma.Decimal(0));
+    const totalExpenditure = financialLines.filter((line) => line.lineType === "EXPENDITURE").reduce((sum, line) => sum.plus(line.estimatedExpenditure ?? line.quarterlyActual ?? 0), new Prisma.Decimal(0));
+    const totalIncome = fundingReceivedTotal.plus(otherIncomeTotal);
+    await tx.grantReportVersion.update({ where: { id: context.version.id }, data: { fundingReceivedTotal, otherIncomeTotal, totalIncome, quarterlyExpenditureTotal: totalExpenditure, totalExpenditure, surplusDeficit: totalIncome.minus(totalExpenditure) } });
+    await tx.grantBankImportBatch.update({ where: { id: batch.id }, data: { status: "CONFIRMED", confirmedByUserId: input.actorUserId, confirmedAt: new Date() } });
+    await tx.auditLog.create({ data: { actorUserId: input.actorUserId, action: "grant.bank_import.transactions.posted", entityType: "GrantBankImportBatch", entityId: batch.id, metadata: { reportId: input.reportId, versionId: context.version.id, transactionCount: preview.rows.length, confirmedCredits: preview.totals.confirmedCredits, confirmedDebits: preview.totals.confirmedDebits, proposedCashReceived: preview.totals.proposedCashReceived, proposedOperatingExpenses: preview.totals.proposedOperatingExpenses } } });
+    const updated = await findGrantBankImport(tx, input.reportId, input.importId);
+    if (!updated) throw new GrantBankImportError("The posted bank import could not be reloaded.", 500);
+    return buildGrantBankPostingPreview(updated, context, new Set(updated.statements.flatMap((statement) => statement.transactions.map((transaction) => transaction.id))));
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 15_000 });
+}
+
+export async function returnGrantBankImportToCategorisation(input: { reportId: string; importId: string; actorUserId: string }) {
+  return prisma.$transaction(async (tx) => {
+    const { context, batch, sources } = await loadGrantBankPostingContext(tx, input);
+    if (!reportIsEditable(context)) throw new GrantBankImportError("The current report version is no longer editable.", 409);
+    if (batch.status !== "READY_FOR_CONFIRMATION" || sources.length > 0) throw new GrantBankImportError("This bank import can no longer return to categorisation.", 409);
+    await tx.grantBankImportBatch.update({ where: { id: batch.id }, data: { status: "NEEDS_REVIEW" } });
+    await tx.auditLog.create({ data: { actorUserId: input.actorUserId, action: "grant.bank_import.posting.review_returned", entityType: "GrantBankImportBatch", entityId: batch.id, before: { status: batch.status }, after: { status: "NEEDS_REVIEW" }, metadata: { reportId: input.reportId, versionId: context.version.id } } });
+    const updated = await findGrantBankImport(tx, input.reportId, input.importId);
+    if (!updated) throw new GrantBankImportError("The bank import could not be reloaded.", 500);
+    return toWorkspaceDto(updated, context.version.reportType, reportIsEditable(context));
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 15_000 });
 }

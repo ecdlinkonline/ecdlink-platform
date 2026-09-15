@@ -83,6 +83,7 @@ test("all bank-import API routes use database-backed report admin authorization"
     "app/api/grant-reports/[reportId]/bank-import/[importId]/statements/[statementId]/file/route.ts",
     "app/api/grant-reports/[reportId]/bank-import/[importId]/statements/[statementId]/extract/route.ts",
     "app/api/grant-reports/[reportId]/bank-import/[importId]/transactions/action/route.ts",
+    "app/api/grant-reports/[reportId]/bank-import/[importId]/posting/route.ts",
   ];
   const auth = readFileSync("lib/api/report-auth.ts", "utf8");
   assert.match(auth, /requireIdentityAdmin\(\)/);
@@ -249,7 +250,7 @@ test("a no-transactions parser result can be retried after parser support improv
 
 test("categorisation mutations are scoped, audited and never write Grant Report financial lines", () => {
   const source = readFileSync("lib/services/grant-bank-imports.ts", "utf8");
-  const categorisation = source.slice(source.indexOf("export async function suggestGrantBankTransactionCategories"));
+  const categorisation = source.slice(source.indexOf("export async function suggestGrantBankTransactionCategories"), source.indexOf("function buildGrantBankPostingPreview"));
   assert.match(categorisation, /requireMutableBatch\(tx, input\)/);
   assert.match(categorisation, /grant\.bank_transactions\.categorisation\.suggested/);
   assert.match(categorisation, /grant\.bank_transaction\.categorisation\.confirmed/);

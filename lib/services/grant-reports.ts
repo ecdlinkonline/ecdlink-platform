@@ -273,11 +273,11 @@ export async function saveGrantReportSection(
         else await tx.grantReportFinancialLine.create({ data: { ...data, grantReportVersionId: version.id } });
       }
     } else if (input.section === "quarterly_income" || input.section === "cash_received") {
-      const existing = await tx.grantReportFinancialLine.findMany({ where: { grantReportVersionId: version.id, lineType: { in: ["FUNDING_RECEIVED", "OTHER_INCOME"] } }, select: { id: true, _count: { select: { documents: true, expenseEntries: true } } } });
+      const existing = await tx.grantReportFinancialLine.findMany({ where: { grantReportVersionId: version.id, lineType: { in: ["FUNDING_RECEIVED", "OTHER_INCOME"] } }, select: { id: true, _count: { select: { documents: true, expenseEntries: true, bankTransactionSources: true } } } });
       const requestedIds = input.data.rows.flatMap((row) => row.id ? [row.id] : []);
       if (new Set(requestedIds).size !== requestedIds.length || requestedIds.some((id) => !existing.some((row) => row.id === id))) throw new GrantReportingServiceError("One or more income rows do not belong to this report version.", 422);
       const removed = existing.filter((row) => !requestedIds.includes(row.id));
-      if (removed.some((row) => row._count.documents > 0 || row._count.expenseEntries > 0)) throw new GrantReportingServiceError("An income row with linked evidence or expense entries cannot be removed.", 409);
+      if (removed.some((row) => row._count.documents > 0 || row._count.expenseEntries > 0 || row._count.bankTransactionSources > 0)) throw new GrantReportingServiceError("An income row with linked evidence, expense entries or bank transactions cannot be removed.", 409);
       if (removed.length) await tx.grantReportFinancialLine.deleteMany({ where: { id: { in: removed.map((row) => row.id) }, grantReportVersionId: version.id } });
       for (const [displayOrder, row] of input.data.rows.entries()) {
         const data = { lineType: row.lineType, categoryName: row.categoryName, quarterlyActual: row.amount, displayOrder };
@@ -305,11 +305,11 @@ export async function saveGrantReportSection(
       await tx.grantReportVersion.update({ where: { id: version.id }, data: { quarterlyExpenditureTotal: totalExpenditure, totalExpenditure, surplusDeficit: version.totalIncome.minus(totalExpenditure) } });
     } else if (input.section === "operating_expenses") {
       if (!new Prisma.Decimal(input.data.totalCashAvailable).equals(effectiveTotalIncome)) throw new GrantReportingServiceError("Total cash available does not match the saved cash received section.", 422);
-      const existing = await tx.grantReportFinancialLine.findMany({ where: { grantReportVersionId: version.id, lineType: "EXPENDITURE" }, select: { id: true, _count: { select: { documents: true, expenseEntries: true } } } });
+      const existing = await tx.grantReportFinancialLine.findMany({ where: { grantReportVersionId: version.id, lineType: "EXPENDITURE" }, select: { id: true, _count: { select: { documents: true, expenseEntries: true, bankTransactionSources: true } } } });
       const requestedIds = input.data.rows.flatMap((row) => row.id ? [row.id] : []);
       if (new Set(requestedIds).size !== requestedIds.length || requestedIds.some((id) => !existing.some((row) => row.id === id))) throw new GrantReportingServiceError("One or more operating expense rows do not belong to this report version.", 422);
       const removed = existing.filter((row) => !requestedIds.includes(row.id));
-      if (removed.some((row) => row._count.documents > 0 || row._count.expenseEntries > 0)) throw new GrantReportingServiceError("An operating expense row with linked evidence or expense entries cannot be removed.", 409);
+      if (removed.some((row) => row._count.documents > 0 || row._count.expenseEntries > 0 || row._count.bankTransactionSources > 0)) throw new GrantReportingServiceError("An operating expense row with linked evidence, expense entries or bank transactions cannot be removed.", 409);
       if (removed.length) await tx.grantReportFinancialLine.deleteMany({ where: { id: { in: removed.map((row) => row.id) }, grantReportVersionId: version.id } });
       for (const [displayOrder, row] of input.data.rows.entries()) {
         const variance = new Prisma.Decimal(row.quarterlyBudget ?? 0).minus(row.estimatedExpenditure ?? 0);

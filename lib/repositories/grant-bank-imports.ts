@@ -99,6 +99,16 @@ export function findGrantBankImport(client: Pick<Prisma.TransactionClient, "gran
   return client.grantBankImportBatch.findFirst({ where: { id: importId, originatingGrantReportId: reportId }, include: grantBankImportInclude });
 }
 
+export function findGrantBankTransactionSources(
+  client: Pick<Prisma.TransactionClient, "grantReportBankTransactionSource">,
+  versionId: string,
+) {
+  return client.grantReportBankTransactionSource.findMany({
+    where: { grantReportVersionId: versionId },
+    select: { grantBankTransactionId: true },
+  });
+}
+
 export function findGrantBankStatementForAccess(
   client: Pick<Prisma.TransactionClient, "grantBankStatement">,
   input: { reportId: string; importId: string; statementId: string },

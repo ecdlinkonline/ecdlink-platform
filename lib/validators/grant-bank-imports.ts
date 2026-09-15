@@ -49,3 +49,8 @@ export const grantBankCategorisationActionSchema = z.discriminatedUnion("action"
 ]);
 
 export type GrantBankCategorisationActionInput = z.infer<typeof grantBankCategorisationActionSchema>;
+
+export const grantBankPostingActionSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("post") }).strict(),
+  z.object({ action: z.literal("return_to_categorisation") }).strict(),
+]);

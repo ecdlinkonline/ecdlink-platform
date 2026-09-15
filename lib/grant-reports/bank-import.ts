@@ -1,3 +1,4 @@
+import type { GrantBankTransactionType } from "@prisma/client";
 import type { GrantBankTransactionCategory, GrantBankTransactionPresentationStatus } from "@/lib/grant-reports/bank-transaction-categorisation";
 
 export const grantBankImportReportTypes = ["QUARTERLY_EXPENDITURE", "QUARTERLY_CASH_FLOW"] as const;
@@ -113,5 +114,42 @@ export type GrantBankImportWorkspaceDto = {
     percentage: number;
     readyToComplete: boolean;
     complete: boolean;
+  };
+};
+
+export type GrantBankPostingPreviewDto = {
+  reportId: string;
+  importId: string;
+  versionId: string;
+  currency: string;
+  status: string;
+  posted: boolean;
+  canPost: boolean;
+  rows: Array<{
+    transactionId: string;
+    statementId: string;
+    statementName: string;
+    transactionDate: string;
+    description: string;
+    direction: "DEBIT" | "CREDIT";
+    amount: string;
+    runningBalance: string | null;
+    sourcePage: number | null;
+    sourceRow: number | null;
+    confirmedType: GrantBankTransactionType;
+    confirmedCategory: string;
+    treatment: "CASH_RECEIVED" | "OPERATING_EXPENSE" | "NEEDS_POSTING_REVIEW";
+    lineType: "FUNDING_RECEIVED" | "OTHER_INCOME" | "EXPENDITURE" | null;
+    reportCategory: string | null;
+    safe: boolean;
+    reason: string | null;
+  }>;
+  totals: {
+    confirmedCredits: string;
+    confirmedDebits: string;
+    proposedCashReceived: string;
+    proposedOperatingExpenses: string;
+    netMovement: string;
+    unmapped: number;
   };
 };
