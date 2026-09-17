@@ -4,6 +4,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { buildSuggestedGrantIndicators, dbeQuarterlyCashFlowExpenseCategories, dbeQuarterlyExpenditureCategories, grantReportCompletion, mapQuarterlyExpenditureIncomeToCashReceived, quarterlyCashFlowCompletion, quarterlyCashFlowTotals, quarterlyExpenditureCompletion, resolveGrantReportTemplate } from "@/lib/grant-reports/editor";
 import { buildFinancialReconciliation } from "@/lib/grant-reports/financial-reconciliation";
+import { buildQuarterlySubmissionReadiness } from "@/lib/grant-reports/submission-readiness";
 import type { GrantReportFiltersInput } from "@/lib/validators/grant-reports";
 
 export function withGrantReportingTransaction<T>(operation: (tx: Prisma.TransactionClient) => Promise<T>) {
@@ -288,17 +289,20 @@ export async function getGrantReportEditor(reportId: string) {
     select: {
       id: true,
       status: true,
+      grantAwardId: true,
+      obligationId: true,
       currentVersionNumber: true,
-      obligation: { select: { id: true, title: true, type: true, dueAt: true, reportingPeriodStart: true, reportingPeriodEnd: true, financialYear: true, quarter: true, tranche: { select: { id: true, trancheNumber: true, scheduledAmount: true } } } },
+      obligation: { select: { id: true, grantAwardId: true, status: true, title: true, type: true, dueAt: true, reportingPeriodStart: true, reportingPeriodEnd: true, financialYear: true, quarter: true, tranche: { select: { id: true, trancheNumber: true, scheduledAmount: true } } } },
       award: {
         select: {
           id: true,
+          centreId: true,
           awardNumber: true,
           title: true,
           awardedAmount: true,
           currency: true,
           centre: { select: { id: true, centreName: true, npoNumber: true, physicalAddress: true, suburb: true, area: true, province: true, postalCode: true, contactPerson: true, phone: true, email: true } },
-          fundingProject: { select: { id: true, title: true, objective: true, expectedOutcomes: true, requiredItems: true } },
+          fundingProject: { select: { id: true, title: true, objective: true, expectedOutcomes: true, requiredItems: true, profile: { select: { centreId: true } } } },
           organisations: partyInclude,
         },
       },
@@ -339,6 +343,7 @@ export async function getGrantReportEditor(reportId: string) {
         },
       },
       certifications: { include: { confirmedBy: { select: { firstName: true, lastName: true, email: true } } }, orderBy: [{ displayOrder: "asc" }, { createdAt: "asc" }] },
+      reviews: { select: { id: true } },
       documents: { include: { file: { select: { originalFilename: true, mimeType: true, fileSize: true, createdAt: true } }, indicator: { select: { id: true, objective: true } }, uploadedBy: { select: { firstName: true, lastName: true, email: true } } }, orderBy: { uploadedAt: "desc" } },
     },
   });
@@ -383,15 +388,23 @@ export async function getGrantReportEditor(reportId: string) {
       select: {
         id: true,
         status: true,
+        originatingGrantReportId: true,
+        grantAwardId: true,
+        centreId: true,
+        financialYear: true,
+        quarter: true,
+        reportingPeriodStart: true,
+        reportingPeriodEnd: true,
         statements: {
           select: {
             id: true,
             statementMonth: true,
             periodStart: true,
             periodEnd: true,
+            extractionStatus: true,
             openingBalance: true,
             closingBalance: true,
-            transactions: { select: { direction: true, originalAmount: true } },
+            transactions: { select: { id: true, reviewStatus: true, direction: true, originalAmount: true } },
           },
         },
       },
@@ -463,6 +476,30 @@ export async function getGrantReportEditor(reportId: string) {
     hasAuditedFinancialStatements: documents.some((document) => document.documentType === "AUDITED_FINANCIAL_STATEMENTS"),
   });
 
+  const submissionReadiness = version.reportType === "QUARTERLY_CASH_FLOW" ? buildQuarterlySubmissionReadiness({
+    report: {
+      id: report.id, status: report.status, grantAwardId: report.grantAwardId, obligationId: report.obligationId,
+      currentVersionNumber: report.currentVersionNumber, awardCentreId: report.award.centreId,
+      projectCentreId: report.award.fundingProject.profile.centreId,
+      obligation: report.obligation,
+    },
+    version: {
+      grantReportId: version.grantReportId, versionNumber: version.versionNumber, status: version.status,
+      reportType: version.reportType, financialYear: version.financialYear, quarter: version.quarter,
+      reportingPeriodStart: version.reportingPeriodStart, reportingPeriodEnd: version.reportingPeriodEnd,
+      submittedAt: version.submittedAt, certificationAcknowledged: version.certificationAcknowledged,
+      surplusDeficit: version.surplusDeficit,
+      certification: version.certifications.map((row) => ({
+        party: row.party, nameSnapshot: row.nameSnapshot, designationSnapshot: row.designationSnapshot,
+        certificationDate: row.certificationDate, digitallyConfirmed: row.digitallyConfirmed, confirmedAt: row.confirmedAt,
+      })),
+      cashReceivedLineCount: incomeLines.length, operatingExpenseLineCount: expenditureLines.length,
+      unresolvedVarianceCount: expenditureLines.filter((row) => row.variance && !row.variance.isZero() && !row.reasonForVariance?.trim()).length,
+      documentCount: version.documents.length, reviewCount: version.reviews.length,
+    },
+    financialReconciliation, bankImports: reconciliationImports,
+  }) : null;
+
   return {
     report: { id: report.id, title: report.obligation.title, status: report.status, type: version.reportType, template: resolveGrantReportTemplate(version.reportType), dueAt: report.obligation.dueAt.toISOString() },
     version: { id: version.id, versionNumber: version.versionNumber, status: version.status, editable, currency: version.currency, completion },
@@ -527,6 +564,7 @@ export async function getGrantReportEditor(reportId: string) {
         ...quarterlyCashFlowTotals(cashFlowIncomeRows.map((row) => row.amount), expenditureLines.map((row) => ({ quarterlyBudget: decimalString(row.quarterlyBudget), estimatedExpenditure: decimalString(row.estimatedExpenditure) }))),
       },
       financialReconciliation,
+      submissionReadiness,
     },
     documents,
     certifications: version.certifications.map((row) => ({ id: row.id, party: row.party, nameSnapshot: row.nameSnapshot, designationSnapshot: row.designationSnapshot, certificationDate: dateValue(row.certificationDate), digitallyConfirmed: row.digitallyConfirmed, confirmedAt: dateValue(row.confirmedAt), confirmedBy: row.confirmedBy ? [row.confirmedBy.firstName, row.confirmedBy.lastName].filter(Boolean).join(" ") || row.confirmedBy.email || "Internal user" : null })),

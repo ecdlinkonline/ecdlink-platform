@@ -26,6 +26,7 @@ export const dbeQuarterlyCashFlowSections = [
   { id: "operating_expenses", label: "Operating Expenses" },
   { id: "variance_review", label: "Variance & Reasons" },
   { id: "financial_reconciliation", label: "Financial Reconciliation" },
+  { id: "submission_readiness", label: "Submission Readiness" },
   { id: "certification", label: "Certification & Review" },
 ] as const;
 
