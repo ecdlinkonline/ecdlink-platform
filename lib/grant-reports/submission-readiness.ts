@@ -17,7 +17,22 @@ export type SubmissionReadinessCheck = {
   guidance?: string;
   section?: DbeQuarterlyCashFlowSectionId;
   href?: string;
+  parentCheckId?: string;
 };
+
+export function selectSubmissionAcknowledgementWarnings(checks: SubmissionReadinessCheck[]) {
+  const warnings = checks.filter((check) => check.status === "NEEDS_REVIEW");
+  return warnings.filter((check) => !warnings.some((child) => child.parentCheckId === check.id));
+}
+
+export function canShowQuarterlySubmissionAction(input: {
+  editable: boolean;
+  readinessState: SubmissionReadinessState | null;
+  certifications: Array<{ party: string; digitallyConfirmed: boolean }>;
+}) {
+  const certificationsComplete = (["COMPILER", "APPROVER"] as const).every((party) => input.certifications.some((item) => item.party === party && item.digitallyConfirmed));
+  return input.editable && certificationsComplete && input.readinessState !== null && input.readinessState !== "BLOCKED";
+}
 
 type BankImport = {
   id: string;
@@ -106,9 +121,17 @@ export function buildQuarterlySubmissionReadiness(input: SubmissionReadinessInpu
     && dateOnly(report.obligation.reportingPeriodStart) === canonical.reportingPeriodStart && dateOnly(report.obligation.reportingPeriodEnd) === canonical.reportingPeriodEnd);
   add({ id: "period", group: "Report Information", title: "Canonical reporting quarter", status: periodAligned ? "COMPLETE" : "BLOCKED", detail: periodAligned ? `${canonical!.reportingPeriodStart} – ${canonical!.reportingPeriodEnd} matches the current version and obligation.` : "The financial year, quarter or dates do not match the canonical reporting period.", guidance: periodAligned ? undefined : "Review General Information and save the canonical quarter.", section: periodAligned ? undefined : "cash_flow_general" });
 
+  const submittedAligned = report.status === "SUBMITTED" && version.status === "SUBMITTED" && version.submittedAt !== null && report.obligation.status === "SUBMITTED";
   const draftAligned = report.status === "DRAFT" && version.status === "DRAFT" && version.submittedAt === null
     && report.obligation.status !== "WAIVED" && report.obligation.status !== "CANCELLED" && report.obligation.status !== "ARCHIVED" && version.reviewCount === 0;
-  add({ id: "draft", group: "Report Information", title: "Draft submission state", status: draftAligned ? "COMPLETE" : "BLOCKED", detail: draftAligned ? "This is the current editable Draft; no submission or review record exists." : "This report is not an unsubmitted, editable current Draft.", guidance: draftAligned ? undefined : "Resolve the report lifecycle state before preparing a submission." });
+  add({
+    id: "draft",
+    group: "Report Information",
+    title: submittedAligned ? "Submitted report state" : "Draft submission state",
+    status: draftAligned || submittedAligned ? "COMPLETE" : "BLOCKED",
+    detail: submittedAligned ? "This is the official submitted, read-only report version." : draftAligned ? "This is the current editable Draft; no submission or review record exists." : "This report is not an unsubmitted, editable current Draft.",
+    guidance: draftAligned || submittedAligned ? undefined : "Resolve the report lifecycle state before preparing a submission.",
+  });
 
   // Reuse the existing five-check completion contract. Budgets and documents are not in its mandatory Cash Flow checks.
   const completion = quarterlyCashFlowCompletion({
@@ -134,7 +157,7 @@ export function buildQuarterlySubmissionReadiness(input: SubmissionReadinessInpu
       // Confirmed statement discrepancies are shown once, on their month-specific bank check below.
       if (warning.code === "SOURCE_STATEMENT_DISCREPANCY" && input.bankImports.some((batch) => batch.status === "CONFIRMED")) continue;
       const status = warning.severity === "BLOCKING" ? "BLOCKED" : warning.severity === "WARNING" ? "NEEDS_REVIEW" : "COMPLETE";
-      add({ id: `financial-${warning.code}-${checks.length}`, group: warning.code.includes("IMPORT") || warning.code.includes("STATEMENT") || warning.code.includes("PROVENANCE") ? "Bank Evidence" : "Financial Information", title: warning.code === "SOURCE_STATEMENT_DISCREPANCY" ? "Statement balance discrepancy" : warning.code === "NEGATIVE_CASH_POSITION" ? "Recorded cash position" : warning.code.replaceAll("_", " ").toLowerCase().replace(/\b\w/g, (letter) => letter.toUpperCase()), status, detail: warning.message, guidance: status === "COMPLETE" ? undefined : warning.code === "SOURCE_STATEMENT_DISCREPANCY" ? "Review the source bank statement discrepancy before certification." : "Review the source evidence and resolve this finding before submission.", section: status === "COMPLETE" ? undefined : "financial_reconciliation" });
+      add({ id: `financial-${warning.code}-${checks.length}`, parentCheckId: "reconciliation", group: warning.code.includes("IMPORT") || warning.code.includes("STATEMENT") || warning.code.includes("PROVENANCE") ? "Bank Evidence" : "Financial Information", title: warning.code === "SOURCE_STATEMENT_DISCREPANCY" ? "Statement balance discrepancy" : warning.code === "NEGATIVE_CASH_POSITION" ? "Recorded cash position" : warning.code.replaceAll("_", " ").toLowerCase().replace(/\b\w/g, (letter) => letter.toUpperCase()), status, detail: warning.message, guidance: status === "COMPLETE" ? undefined : warning.code === "SOURCE_STATEMENT_DISCREPANCY" ? "Review the source bank statement discrepancy before certification." : "Review the source evidence and resolve this finding before submission.", section: status === "COMPLETE" ? undefined : "financial_reconciliation" });
     }
     const calculatedSurplus = new Prisma.Decimal(reconciliation.cash.totalCashReceived).minus(reconciliation.expenditure.actualExpenditure);
     const totalsAligned = calculatedSurplus.equals(version.surplusDeficit);
@@ -158,7 +181,7 @@ export function buildQuarterlySubmissionReadiness(input: SubmissionReadinessInpu
       const matching = statements.filter((statement) => dateOnly(statement.statementMonth ?? statement.periodEnd ?? statement.periodStart)?.slice(0, 7) === month.value.slice(0, 7));
       const extracted = matching.length === 1 && matching[0].extractionStatus === "EXTRACTED";
       const discrepancy = reconciliation?.warnings.find((warning) => warning.code === "SOURCE_STATEMENT_DISCREPANCY" && warning.message.startsWith(month.label));
-      add({ id: `statement-${month.value}`, group: "Bank Evidence", title: `${month.label} statement`, status: !extracted ? "BLOCKED" : discrepancy ? "NEEDS_REVIEW" : "COMPLETE", detail: !extracted ? "The required statement is missing, duplicated or not extracted." : discrepancy ? discrepancy.message : "Extracted and no source balance discrepancy was found.", guidance: !extracted ? "Upload or extract the statement for this month." : discrepancy ? "Review this statement's source discrepancy before certification." : undefined, href: !extracted || discrepancy ? importHref : undefined });
+      add({ id: `statement-${month.value}`, parentCheckId: discrepancy ? "reconciliation" : undefined, group: "Bank Evidence", title: `${month.label} statement`, status: !extracted ? "BLOCKED" : discrepancy ? "NEEDS_REVIEW" : "COMPLETE", detail: !extracted ? "The required statement is missing, duplicated or not extracted." : discrepancy ? discrepancy.message : "Extracted and no source balance discrepancy was found.", guidance: !extracted ? "Upload or extract the statement for this month." : discrepancy ? "Review this statement's source discrepancy before certification." : undefined, href: !extracted || discrepancy ? importHref : undefined });
     }
     const postedIds = sourceEvidence.map((source) => source.transactionId);
     const expectedIds = confirmed.flatMap((batch) => batch.statements.flatMap((statement) => statement.transactions.map((transaction) => transaction.id)));

@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
+import { prisma } from "@/lib/db/prisma";
 import { findMatchingQuarterlyExpenditureIncome, getGrantReportEditor, withGrantReportingTransaction } from "@/lib/repositories/grant-reports";
-import type { CreateGrantAwardInput, CreateGrantReportingObligationInput, SaveGrantReportSectionInput } from "@/lib/validators/grant-reports";
+import type { CreateGrantAwardInput, CreateGrantReportingObligationInput, SaveGrantReportSectionInput, SubmitGrantReportInput } from "@/lib/validators/grant-reports";
 import { GRANT_AWARD_STAGING_ENTITY } from "@/lib/services/grant-award-agreements";
 
 export class GrantReportingServiceError extends Error {
@@ -323,6 +324,10 @@ export async function saveGrantReportSection(
       await tx.grantReportVersion.update({ where: { id: version.id }, data: { openingBankBalance: input.data.openingBankBalance, closingBankBalance: input.data.closingBankBalance } });
     } else if (input.section === "certification") {
       const confirmedAt = new Date();
+      const previous = await tx.grantReportCertification.findMany({
+        where: { grantReportVersionId: version.id },
+        select: { party: true, digitallyConfirmed: true },
+      });
       await tx.grantReportCertification.deleteMany({ where: { grantReportVersionId: version.id } });
       await tx.grantReportCertification.createMany({ data: input.data.rows.map((row, displayOrder) => ({
         grantReportVersionId: version.id,
@@ -338,10 +343,95 @@ export async function saveGrantReportSection(
       })) });
       const allConfirmed = input.data.rows.every((row) => row.digitallyConfirmed);
       await tx.grantReportVersion.update({ where: { id: version.id }, data: { certificationAcknowledged: allConfirmed, certificationTextSnapshot: allConfirmed ? certificationConfirmationText : null } });
+      for (const row of input.data.rows) {
+        if (row.digitallyConfirmed && !previous.some((item) => item.party === row.party && item.digitallyConfirmed)) {
+          await tx.auditLog.create({
+            data: {
+              actorUserId,
+              action: row.party === "COMPILER" ? "grant.report.compiler_certified" : "grant.report.approver_certified",
+              entityType: "GrantReportVersion",
+              entityId: version.id,
+              metadata: json({ reportId, versionNumber: version.versionNumber, party: row.party }),
+            },
+          });
+        }
+      }
     }
     await tx.auditLog.create({ data: { actorUserId, action: "grant.report.section.saved", entityType: "GrantReportVersion", entityId: version.id, metadata: json({ reportId, versionNumber: version.versionNumber, section: input.section }) } });
   });
   const updated = await reload(reportId);
   if (!updated) throw new GrantReportingServiceError("The updated report could not be loaded.", 500);
   return updated;
+}
+
+export type GrantReportSubmissionTransactionRunner = <T>(operation: (tx: Prisma.TransactionClient) => Promise<T>) => Promise<T>;
+
+export async function submitGrantReport(
+  reportId: string,
+  input: SubmitGrantReportInput,
+  actorUserId: string,
+  // Serializable isolation makes the status checks and transition one atomic decision.
+  runTransaction: GrantReportSubmissionTransactionRunner = (operation) => prisma.$transaction(operation, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 15_000 }),
+  reload: typeof getGrantReportEditor = getGrantReportEditor,
+  loadForValidation: typeof getGrantReportEditor = getGrantReportEditor,
+) {
+  let result: { alreadySubmitted: boolean };
+  try {
+    result = await runTransaction(async (tx) => {
+      const actor = await tx.user.findFirst({ where: { id: actorUserId, role: "SUPER_ADMIN", status: "ACTIVE" }, select: { id: true } });
+      if (!actor) throw new GrantReportingServiceError("Only an active Super Admin can submit this report.", 403);
+
+      const current = await tx.grantReport.findUnique({
+        where: { id: reportId },
+        select: { id: true, status: true, currentVersionNumber: true, obligationId: true },
+      });
+      if (!current) throw new GrantReportingServiceError("Grant report not found.", 404);
+      const version = await tx.grantReportVersion.findUnique({
+        where: { grantReportId_versionNumber: { grantReportId: reportId, versionNumber: current.currentVersionNumber } },
+        select: { id: true, versionNumber: true, status: true, reportType: true, submittedAt: true },
+      });
+      if (!version) throw new GrantReportingServiceError("The current report version was not found.", 409);
+      if (current.status === "SUBMITTED" && version.status === "SUBMITTED" && version.submittedAt) return { alreadySubmitted: true };
+      if (current.status !== "DRAFT" || version.status !== "DRAFT" || version.submittedAt) throw new GrantReportingServiceError("This report version is no longer editable.", 409);
+      if (version.reportType !== "QUARTERLY_CASH_FLOW") throw new GrantReportingServiceError("Only Quarterly Cash Flow reports can use this submission workflow.", 422);
+
+      const editor = await loadForValidation(reportId, tx);
+      const readiness = editor?.quarterlyCashFlow.submissionReadiness;
+      if (!editor || !readiness) throw new GrantReportingServiceError("Submission readiness could not be calculated.", 409);
+      if (readiness.checks.some((check) => check.id === "certification" && check.status === "BLOCKED")) throw new GrantReportingServiceError("Report certification is incomplete.", 409);
+      if (readiness.state === "BLOCKED") throw new GrantReportingServiceError("This report contains blocking validation issues.", 409);
+      if (readiness.state === "NEEDS_REVIEW" && !input.acknowledgeWarnings) throw new GrantReportingServiceError("Review and acknowledge the outstanding warnings before submitting.", 409);
+
+      const submittedAt = new Date();
+      const versionUpdate = await tx.grantReportVersion.updateMany({
+        where: { id: version.id, grantReportId: reportId, versionNumber: current.currentVersionNumber, status: "DRAFT", submittedAt: null },
+        data: { status: "SUBMITTED", submittedByUserId: actor.id, submittedAt },
+      });
+      const reportUpdate = await tx.grantReport.updateMany({
+        where: { id: reportId, status: "DRAFT", currentVersionNumber: current.currentVersionNumber },
+        data: { status: "SUBMITTED" },
+      });
+      if (versionUpdate.count !== 1 || reportUpdate.count !== 1) throw new GrantReportingServiceError("Submission readiness has changed. Review the report before submitting.", 409);
+      await tx.grantReportingObligation.update({ where: { id: current.obligationId }, data: { status: "SUBMITTED" } });
+      await tx.auditLog.create({
+        data: {
+          actorUserId: actor.id,
+          action: "grant.report.submitted",
+          entityType: "GrantReportVersion",
+          entityId: version.id,
+          metadata: json({ reportId, reportVersionId: version.id, versionNumber: version.versionNumber, reportType: version.reportType, obligationId: current.obligationId, readinessState: readiness.state, warningAcknowledged: readiness.state === "NEEDS_REVIEW" && input.acknowledgeWarnings }),
+        },
+      });
+      return { alreadySubmitted: false };
+    });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034") {
+      const current = await reload(reportId);
+      if (current?.report.status === "SUBMITTED" && current.version.status === "SUBMITTED") return { alreadySubmitted: true, report: current };
+    }
+    throw error;
+  }
+  const updated = await reload(reportId);
+  if (!updated) throw new GrantReportingServiceError("The submitted report could not be loaded.", 500);
+  return { ...result, report: updated };
 }

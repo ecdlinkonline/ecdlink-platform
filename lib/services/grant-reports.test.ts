@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { Prisma } from "@prisma/client";
-import { createGrantAward, createGrantReportingObligation, GrantReportingServiceError, saveGrantReportSection, type GrantReportingTransactionRunner } from "./grant-reports";
+import { createGrantAward, createGrantReportingObligation, GrantReportingServiceError, saveGrantReportSection, submitGrantReport, type GrantReportingTransactionRunner } from "./grant-reports";
 import { createGrantAwardSchema, createGrantReportingObligationSchema, saveGrantReportSectionSchema } from "@/lib/validators/grant-reports";
 
 function runner(transaction: object): GrantReportingTransactionRunner {
@@ -104,7 +104,7 @@ test("obligation creation eagerly creates Draft report version 1 and audits the 
 });
 
 function reportSectionTransaction(versionStatus = "DRAFT", reportStatus = "DRAFT", reportType = "FINAL") {
-  const captured: { sustainabilityRows?: unknown; certifications?: Array<Record<string, unknown>>; audit?: Record<string, unknown>; deleted?: boolean; obligationUpdate?: Record<string, unknown>; bankBatchWhere?: Record<string, unknown>; bankBatchUpdate?: Record<string, unknown>; versionUpdates: Array<Record<string, unknown>>; financialCreates: Array<Record<string, unknown>> } = { versionUpdates: [], financialCreates: [] };
+  const captured: { sustainabilityRows?: unknown; certifications?: Array<Record<string, unknown>>; audit?: Record<string, unknown>; audits: Record<string, unknown>[]; deleted?: boolean; obligationUpdate?: Record<string, unknown>; bankBatchWhere?: Record<string, unknown>; bankBatchUpdate?: Record<string, unknown>; versionUpdates: Array<Record<string, unknown>>; financialCreates: Array<Record<string, unknown>> } = { audits: [], versionUpdates: [], financialCreates: [] };
   const report = { id: "report-1", status: reportStatus, currentVersionNumber: 1, award: { id: "award-1", awardNumber: "AW-1", title: "Award", awardedAmount: 1000, currency: "ZAR", centre: { id: "centre-1", centreName: "Centre", npoNumber: null, physicalAddress: null, suburb: null, area: null, province: null, postalCode: null, contactPerson: null, phone: null, email: null }, fundingProject: { id: "project-1", title: "Project", objective: null, expectedOutcomes: [], requiredItems: [] }, organisations: [] }, obligation: { id: "obligation-1", financialYear: "2026", quarter: 1, tranche: null } };
   const version = { id: "version-1", versionNumber: 1, status: versionStatus, reportType, centreSnapshot: null, projectSnapshot: null, awardSnapshot: null, fundingOrganisationSnapshot: null, trancheSnapshot: null, totalIncome: new Prisma.Decimal("1000.00"), totalExpenditure: new Prisma.Decimal("200.00") };
   const transaction = {
@@ -112,10 +112,10 @@ function reportSectionTransaction(versionStatus = "DRAFT", reportStatus = "DRAFT
     grantReportVersion: { findUnique: async () => version, findMany: async () => [], update: async ({ data }: { data: Record<string, unknown> }) => { captured.versionUpdates.push(data); return {}; } },
     grantReportFinancialLine: { findMany: async () => [], deleteMany: async () => ({}), create: async ({ data }: { data: Record<string, unknown> }) => { captured.financialCreates.push(data); return {}; }, update: async () => ({}) },
     grantReportSustainabilityItem: { deleteMany: async () => { captured.deleted = true; }, createMany: async ({ data }: { data: unknown }) => { captured.sustainabilityRows = data; } },
-    grantReportCertification: { deleteMany: async () => { captured.deleted = true; }, createMany: async ({ data }: { data: Array<Record<string, unknown>> }) => { captured.certifications = data; } },
+    grantReportCertification: { findMany: async () => [], deleteMany: async () => { captured.deleted = true; }, createMany: async ({ data }: { data: Array<Record<string, unknown>> }) => { captured.certifications = data; } },
     grantReportingObligation: { update: async ({ data }: { data: Record<string, unknown> }) => { captured.obligationUpdate = data; return {}; } },
     grantBankImportBatch: { updateMany: async ({ where, data }: { where: Record<string, unknown>; data: Record<string, unknown> }) => { captured.bankBatchWhere = where; captured.bankBatchUpdate = data; return { count: 1 }; } },
-    auditLog: { create: async ({ data }: { data: Record<string, unknown> }) => { captured.audit = data; } },
+    auditLog: { create: async ({ data }: { data: Record<string, unknown> }) => { captured.audit = data; captured.audits.push(data); } },
   };
   return { transaction, captured };
 }
@@ -160,6 +160,7 @@ test("digital certification stores the authenticated internal confirmer and time
   assert.ok(captured.certifications?.[0].confirmedAt instanceof Date);
   assert.equal(captured.certifications?.[1].confirmedByUserId, null);
   assert.equal(captured.certifications?.[1].confirmedAt, null);
+  assert.deepEqual(captured.audits.map((audit) => audit.action), ["grant.report.compiler_certified", "grant.report.section.saved"]);
 });
 
 test("an indicator with linked evidence cannot be removed from a Draft", async () => {
@@ -244,4 +245,65 @@ test("cash flow source income is copied once and never overwrites saved cash rec
   await saveGrantReportSection("report-1", generalInput, "internal-user-1", runner(saved.transaction), async () => ({ ok: true } as never));
   assert.equal(sourceQueries, 0);
   assert.equal(saved.captured.financialCreates.length, 0);
+});
+
+function submissionFixture(options: { reportStatus?: string; versionStatus?: string; submittedAt?: Date | null; readiness?: "READY" | "NEEDS_REVIEW" | "BLOCKED"; actor?: boolean } = {}) {
+  const captured = { reportUpdates: 0, versionUpdates: 0, obligationUpdates: 0, audits: [] as Record<string, unknown>[] };
+  const transaction = {
+    user: { findFirst: async () => options.actor === false ? null : { id: "internal-admin" } },
+    grantReport: {
+      findUnique: async () => ({ id: "report-1", status: options.reportStatus ?? "DRAFT", currentVersionNumber: 1, obligationId: "obligation-1" }),
+      updateMany: async () => { captured.reportUpdates += 1; return { count: 1 }; },
+    },
+    grantReportVersion: {
+      findUnique: async () => ({ id: "version-1", versionNumber: 1, status: options.versionStatus ?? "DRAFT", reportType: "QUARTERLY_CASH_FLOW", submittedAt: options.submittedAt ?? null }),
+      updateMany: async () => { captured.versionUpdates += 1; return { count: 1 }; },
+    },
+    grantReportingObligation: { update: async () => { captured.obligationUpdates += 1; return {}; } },
+    auditLog: { create: async ({ data }: { data: Record<string, unknown> }) => { captured.audits.push(data); return {}; } },
+  };
+  const editor = { quarterlyCashFlow: { submissionReadiness: { state: options.readiness ?? "READY", checks: [], attentionCount: 0 } } } as never;
+  return { transaction, captured, editor };
+}
+
+test("READY report submits atomically with internal actor and one authoritative audit", async () => {
+  const fixture = submissionFixture();
+  const reload = async () => ({ id: "submitted-editor" } as never);
+  const result = await submitGrantReport("report-1", { acknowledgeWarnings: false }, "internal-admin", runner(fixture.transaction), reload, async () => fixture.editor);
+  assert.equal(result.alreadySubmitted, false);
+  assert.equal(fixture.captured.versionUpdates, 1);
+  assert.equal(fixture.captured.reportUpdates, 1);
+  assert.equal(fixture.captured.obligationUpdates, 1);
+  assert.equal(fixture.captured.audits.length, 1);
+  assert.equal(fixture.captured.audits[0].action, "grant.report.submitted");
+  assert.equal(fixture.captured.audits[0].actorUserId, "internal-admin");
+});
+
+test("BLOCKED never submits and NEEDS_REVIEW requires explicit acknowledgement", async () => {
+  for (const [readiness, acknowledgeWarnings] of [["BLOCKED", true], ["NEEDS_REVIEW", false]] as const) {
+    const fixture = submissionFixture({ readiness });
+    await assert.rejects(() => submitGrantReport("report-1", { acknowledgeWarnings }, "internal-admin", runner(fixture.transaction), async () => null, async () => fixture.editor), (error: unknown) => error instanceof GrantReportingServiceError && error.status === 409);
+    assert.equal(fixture.captured.versionUpdates, 0);
+    assert.equal(fixture.captured.audits.length, 0);
+  }
+});
+
+test("NEEDS_REVIEW submits only after acknowledgement and repeated submitted requests are idempotent", async () => {
+  const warning = submissionFixture({ readiness: "NEEDS_REVIEW" });
+  await submitGrantReport("report-1", { acknowledgeWarnings: true }, "internal-admin", runner(warning.transaction), async () => ({ ok: true } as never), async () => warning.editor);
+  assert.equal(warning.captured.audits.length, 1);
+
+  const submitted = submissionFixture({ reportStatus: "SUBMITTED", versionStatus: "SUBMITTED", submittedAt: new Date("2026-09-17T10:00:00Z") });
+  const result = await submitGrantReport("report-1", { acknowledgeWarnings: true }, "internal-admin", runner(submitted.transaction), async () => ({ ok: true } as never), async () => { throw new Error("readiness must not rerun for an identical retry"); });
+  assert.equal(result.alreadySubmitted, true);
+  assert.equal(submitted.captured.versionUpdates, 0);
+  assert.equal(submitted.captured.audits.length, 0);
+});
+
+test("submission requires an active database SUPER_ADMIN and never mutates financial lines", async () => {
+  const fixture = submissionFixture({ actor: false });
+  await assert.rejects(() => submitGrantReport("report-1", { acknowledgeWarnings: false }, "clerk-metadata-actor", runner(fixture.transaction), async () => null, async () => fixture.editor), (error: unknown) => error instanceof GrantReportingServiceError && error.status === 403);
+  assert.equal(fixture.captured.versionUpdates, 0);
+  assert.equal(fixture.captured.reportUpdates, 0);
+  assert.equal(fixture.captured.audits.length, 0);
 });

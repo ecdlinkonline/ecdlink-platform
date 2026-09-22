@@ -283,8 +283,8 @@ export async function findMatchingQuarterlyExpenditureIncome(
   return null;
 }
 
-export async function getGrantReportEditor(reportId: string) {
-  const report = await prisma.grantReport.findUnique({
+export async function getGrantReportEditor(reportId: string, client: Prisma.TransactionClient | typeof prisma = prisma) {
+  const report = await client.grantReport.findUnique({
     where: { id: reportId },
     select: {
       id: true,
@@ -310,7 +310,7 @@ export async function getGrantReportEditor(reportId: string) {
   });
   if (!report) return null;
 
-  const version = await prisma.grantReportVersion.findUnique({
+  const version = await client.grantReportVersion.findUnique({
     where: { grantReportId_versionNumber: { grantReportId: report.id, versionNumber: report.currentVersionNumber } },
     include: {
       indicators: { orderBy: [{ displayOrder: "asc" }, { createdAt: "asc" }] },
@@ -343,6 +343,7 @@ export async function getGrantReportEditor(reportId: string) {
         },
       },
       certifications: { include: { confirmedBy: { select: { firstName: true, lastName: true, email: true } } }, orderBy: [{ displayOrder: "asc" }, { createdAt: "asc" }] },
+      submittedBy: { select: { firstName: true, lastName: true, email: true } },
       reviews: { select: { id: true } },
       documents: { include: { file: { select: { originalFilename: true, mimeType: true, fileSize: true, createdAt: true } }, indicator: { select: { id: true, objective: true } }, uploadedBy: { select: { firstName: true, lastName: true, email: true } } }, orderBy: { uploadedAt: "desc" } },
     },
@@ -355,8 +356,8 @@ export async function getGrantReportEditor(reportId: string) {
   const dateFilter = periodStart || periodEnd ? { gte: periodStart ?? undefined, lte: periodEnd ?? undefined } : undefined;
   const canSuggestPeriodTotals = editable && Boolean(periodStart && periodEnd);
   const [received, spent] = await Promise.all([
-    canSuggestPeriodTotals ? prisma.grantDisbursement.aggregate({ where: { grantAwardId: report.award.id, receivedAt: dateFilter }, _sum: { amountReceived: true } }) : Promise.resolve({ _sum: { amountReceived: null } }),
-    canSuggestPeriodTotals ? prisma.grantExpenseAllocation.aggregate({ where: { grantAwardId: report.award.id, reversedAt: null, allocationDate: dateFilter }, _sum: { allocatedAmount: true } }) : Promise.resolve({ _sum: { allocatedAmount: null } }),
+    canSuggestPeriodTotals ? client.grantDisbursement.aggregate({ where: { grantAwardId: report.award.id, receivedAt: dateFilter }, _sum: { amountReceived: true } }) : Promise.resolve({ _sum: { amountReceived: null } }),
+    canSuggestPeriodTotals ? client.grantExpenseAllocation.aggregate({ where: { grantAwardId: report.award.id, reversedAt: null, allocationDate: dateFilter }, _sum: { allocatedAmount: true } }) : Promise.resolve({ _sum: { allocatedAmount: null } }),
   ]);
   const suggestedFundingReceived = canSuggestPeriodTotals ? decimalString(received._sum.amountReceived) : null;
 
@@ -383,7 +384,7 @@ export async function getGrantReportEditor(reportId: string) {
       { lineType: "OTHER_INCOME" as const, categoryName: "Other Income", amount: null },
     ];
   const reconciliationImports = version.reportType === "QUARTERLY_CASH_FLOW" && cashFlowFinancialYear && cashFlowQuarter
-    ? await prisma.grantBankImportBatch.findMany({
+    ? await client.grantBankImportBatch.findMany({
       where: { originatingGrantReportId: report.id, grantAwardId: report.award.id, centreId: report.award.centre.id, financialYear: cashFlowFinancialYear, quarter: cashFlowQuarter },
       select: {
         id: true,
@@ -502,7 +503,16 @@ export async function getGrantReportEditor(reportId: string) {
 
   return {
     report: { id: report.id, title: report.obligation.title, status: report.status, type: version.reportType, template: resolveGrantReportTemplate(version.reportType), dueAt: report.obligation.dueAt.toISOString() },
-    version: { id: version.id, versionNumber: version.versionNumber, status: version.status, editable, currency: version.currency, completion },
+    version: {
+      id: version.id,
+      versionNumber: version.versionNumber,
+      status: version.status,
+      editable,
+      currency: version.currency,
+      completion,
+      submittedAt: dateValue(version.submittedAt),
+      submittedBy: version.submittedBy ? [version.submittedBy.firstName, version.submittedBy.lastName].filter(Boolean).join(" ") || version.submittedBy.email || "Internal user" : null,
+    },
     general: {
       reportType: version.reportType,
       awardNumber: snapshotString(awardSnapshot, "awardNumber") ?? (useCurrentFallback ? report.award.awardNumber : null),

@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { GrantReportingServiceError } from "@/lib/services/grant-reports";
 import { createGrantReportSectionHandler, type GrantReportSectionRouteDependencies } from "./report-editor-route";
+import { createGrantReportSubmissionHandler, type GrantReportSubmissionRouteDependencies } from "./report-submission-route";
 
 const validBody = { section: "general", data: { reportingPeriodStart: "2026-01-01", reportingPeriodEnd: "2026-06-30", previousTrancheBalance: "0.00" } };
 function dependencies(overrides: Partial<GrantReportSectionRouteDependencies> = {}): GrantReportSectionRouteDependencies {
@@ -69,6 +70,44 @@ test("invalid payload and invalid report access fail safely", async () => {
   assert.equal((await inaccessible(request(), context)).status, 404);
   const failing = createGrantReportSectionHandler(dependencies({ save: async () => { throw new Error("P2003 DATABASE_URL secret"); } }));
   const response = await failing(request(), context);
+  assert.equal(response.status, 500);
+  assert.doesNotMatch(await response.text(), /P2003|DATABASE_URL|secret/);
+});
+
+function submissionDependencies(overrides: Partial<GrantReportSubmissionRouteDependencies> = {}): GrantReportSubmissionRouteDependencies {
+  return { authorize: async () => ({ internalUser: { id: "internal-admin" } }), checkOrigin: () => null, submit: async () => ({ alreadySubmitted: false }), ...overrides };
+}
+
+const submissionRequest = (body: unknown = { acknowledgeWarnings: false }) => new Request("https://ecdlink.test/api/grant-reports/report-1/submit", { method: "POST", headers: { "Content-Type": "application/json", Origin: "https://ecdlink.test" }, body: JSON.stringify(body) });
+
+test("submission API uses database-backed Super Admin authorization and trusted-origin validation", () => {
+  const source = readFileSync("app/api/grant-reports/[reportId]/submit/route.ts", "utf8");
+  assert.match(source, /authorize:\s*requireReportAdmin/);
+  assert.match(source, /checkOrigin:\s*requireTrustedOrigin/);
+  assert.doesNotMatch(source, /unsafeMetadata|publicMetadata|sessionClaims/);
+});
+
+test("unauthenticated and non-admin submission requests are rejected before the service", async () => {
+  for (const status of [401, 403]) {
+    let submitted = false;
+    const handler = createGrantReportSubmissionHandler(submissionDependencies({ authorize: async () => ({ error: Response.json({ ok: false }, { status }) }), submit: async () => { submitted = true; } }));
+    assert.equal((await handler(submissionRequest(), context)).status, status);
+    assert.equal(submitted, false);
+  }
+});
+
+test("valid submission passes only the authenticated internal actor and warning acknowledgement", async () => {
+  let captured: unknown;
+  const handler = createGrantReportSubmissionHandler(submissionDependencies({ submit: async (reportId, input, actorUserId) => { captured = { reportId, input, actorUserId }; return {}; } }));
+  assert.equal((await handler(submissionRequest({ acknowledgeWarnings: true }), context)).status, 200);
+  assert.deepEqual(captured, { reportId: "report-1", input: { acknowledgeWarnings: true }, actorUserId: "internal-admin" });
+});
+
+test("submission validation and unexpected failures are safe", async () => {
+  const handler = createGrantReportSubmissionHandler(submissionDependencies());
+  assert.equal((await handler(submissionRequest({ acknowledgeWarnings: "yes" }), context)).status, 422);
+  const failing = createGrantReportSubmissionHandler(submissionDependencies({ submit: async () => { throw new Error("P2003 DATABASE_URL secret"); } }));
+  const response = await failing(submissionRequest(), context);
   assert.equal(response.status, 500);
   assert.doesNotMatch(await response.text(), /P2003|DATABASE_URL|secret/);
 });

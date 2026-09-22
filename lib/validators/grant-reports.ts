@@ -359,8 +359,13 @@ export const uploadGrantReportDocumentSchema = z.object({
   indicatorId: optionalId,
 });
 
+export const submitGrantReportSchema = z.object({
+  acknowledgeWarnings: z.boolean(),
+});
+
 export type CreateGrantAwardInput = z.infer<typeof createGrantAwardSchema>;
 export type CreateGrantReportingObligationInput = z.infer<typeof createGrantReportingObligationSchema>;
 export type GrantReportFiltersInput = z.infer<typeof grantReportFiltersSchema>;
 export type SaveGrantReportSectionInput = z.infer<typeof saveGrantReportSectionSchema>;
 export type UploadGrantReportDocumentInput = z.infer<typeof uploadGrantReportDocumentSchema>;
+export type SubmitGrantReportInput = z.infer<typeof submitGrantReportSchema>;

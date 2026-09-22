@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { Prisma } from "@prisma/client";
 import { grantReportCompletion } from "./editor";
 import { buildFinancialReconciliation } from "./financial-reconciliation";
-import { buildQuarterlySubmissionReadiness, type SubmissionReadinessInput } from "./submission-readiness";
+import { buildQuarterlySubmissionReadiness, canShowQuarterlySubmissionAction, selectSubmissionAcknowledgementWarnings, type SubmissionReadinessInput } from "./submission-readiness";
 
 const d = (value: string) => new Prisma.Decimal(value);
 const date = (value: string) => new Date(`${value}T00:00:00.000Z`);
@@ -161,6 +161,37 @@ test("confirmed April and May source discrepancies appear once with their exact 
   assert.equal(result.checks.filter((item) => item.title === "Statement balance discrepancy").length, 0);
 });
 
+test("submission acknowledgement shows actionable reconciliation findings without repeating their parent summary", () => {
+  const input = base(true);
+  input.financialReconciliation!.warnings.push(
+    { severity: "WARNING", code: "NEGATIVE_CASH_POSITION", message: "Recorded expenditure exceeds the cash available for this quarter." },
+    { severity: "WARNING", code: "SOURCE_STATEMENT_DISCREPANCY", message: "April 2026 source difference -227.80." },
+    { severity: "WARNING", code: "SOURCE_STATEMENT_DISCREPANCY", message: "May 2026 source difference -880.00." },
+  );
+  const result = buildQuarterlySubmissionReadiness(input);
+  const warnings = selectSubmissionAcknowledgementWarnings(result.checks);
+  assert.equal(result.state, "NEEDS_REVIEW");
+  assert.equal(result.attentionCount, 3);
+  assert.equal(check(result, "reconciliation")?.status, "NEEDS_REVIEW");
+  assert.deepEqual(warnings.map((item) => item.title), ["Recorded cash position", "April 2026 statement", "May 2026 statement"]);
+  assert.equal(warnings.length, 3);
+  assert.equal(warnings.every((item) => item.parentCheckId === "reconciliation"), true);
+  assert.equal(result.checks.filter((item) => item.status === "NEEDS_REVIEW").length, 4);
+  assert.equal(input.report?.status, "DRAFT");
+  assert.equal(input.version?.submittedAt, null);
+});
+
+test("summary warning remains visible when no actionable child exists; BLOCKED findings stay non-bypassable", () => {
+  const input = base(true);
+  input.financialReconciliation!.warnings.push({ severity: "BLOCKING", code: "INCOMPLETE_BANK_PROVENANCE", message: "Linked source amount differs from the line." });
+  const blocked = buildQuarterlySubmissionReadiness(input);
+  assert.equal(blocked.state, "BLOCKED");
+  assert.deepEqual(selectSubmissionAcknowledgementWarnings(blocked.checks), []);
+  assert.equal(canShowQuarterlySubmissionAction({ editable: true, readinessState: blocked.state, certifications: [{ party: "COMPILER", digitallyConfirmed: true }, { party: "APPROVER", digitallyConfirmed: true }] }), false);
+  const summary = { id: "reconciliation", group: "Financial Information" as const, title: "Financial reconciliation", status: "NEEDS_REVIEW" as const, detail: "Summary finding" };
+  assert.deepEqual(selectSubmissionAcknowledgementWarnings([summary]), [summary]);
+});
+
 test("unconfirmed or misaligned bank import BLOCKS when bank evidence is in use", () => {
   const input = base(true);
   input.bankImports[0].status = "READY_FOR_CONFIRMATION";
@@ -243,4 +274,28 @@ test("the current editable Draft has no mutation-based Submit action in Phase 3B
   input.report!.status = "DRAFT";
   input.version!.reviewCount = 1;
   assert.equal(check(buildQuarterlySubmissionReadiness(input), "draft")?.status, "BLOCKED");
+});
+
+test("Phase 3C keeps Submission Readiness read-only and places the single controlled action after certification", () => {
+  const ui = readFileSync("components/reports/dbe-quarterly-cash-flow-editor.tsx", "utf8");
+  const readinessSource = ui.slice(ui.indexOf("function SubmissionReadiness"), ui.indexOf("function ReconciliationGroup"));
+  const certificationSource = ui.slice(ui.indexOf("function CashFlowCertification"), ui.indexOf("function SectionCard"));
+
+  assert.doesNotMatch(readinessSource, /Submit Report|WorkflowActionDialog|\/submit/);
+  assert.match(readinessSource, /completely read-only|read-only assessment|Complete certification and final submission/);
+  assert.match(certificationSource, /data-final-submission/);
+  assert.match(certificationSource, /Final Submission/);
+  assert.equal((certificationSource.match(/trigger=\{\{ label: "Submit Report" \}\}/g) ?? []).length, 1);
+  assert.match(certificationSource, /canShowQuarterlySubmissionAction/);
+  assert.match(certificationSource, /readiness!\.state === "NEEDS_REVIEW"/);
+  assert.match(certificationSource, /acknowledgeWarnings/);
+});
+
+test("the final submission action requires both persisted certifications and a non-blocking readiness state", () => {
+  const complete = [{ party: "COMPILER", digitallyConfirmed: true }, { party: "APPROVER", digitallyConfirmed: true }];
+  assert.equal(canShowQuarterlySubmissionAction({ editable: true, readinessState: "READY", certifications: complete }), true);
+  assert.equal(canShowQuarterlySubmissionAction({ editable: true, readinessState: "NEEDS_REVIEW", certifications: complete }), true);
+  assert.equal(canShowQuarterlySubmissionAction({ editable: true, readinessState: "BLOCKED", certifications: complete }), false);
+  assert.equal(canShowQuarterlySubmissionAction({ editable: true, readinessState: "READY", certifications: complete.slice(0, 1) }), false);
+  assert.equal(canShowQuarterlySubmissionAction({ editable: false, readinessState: "READY", certifications: complete }), false);
 });
