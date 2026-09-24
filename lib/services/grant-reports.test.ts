@@ -3,6 +3,7 @@ import test from "node:test";
 import { Prisma } from "@prisma/client";
 import { createGrantAward, createGrantReportingObligation, GrantReportingServiceError, saveGrantReportSection, submitGrantReport, type GrantReportingTransactionRunner } from "./grant-reports";
 import { createGrantAwardSchema, createGrantReportingObligationSchema, saveGrantReportSectionSchema } from "@/lib/validators/grant-reports";
+import type { SubmissionReadinessCheck } from "@/lib/grant-reports/submission-readiness";
 
 function runner(transaction: object): GrantReportingTransactionRunner {
   return async <T>(operation: (tx: Prisma.TransactionClient) => Promise<T>) => operation(transaction as Prisma.TransactionClient);
@@ -247,7 +248,7 @@ test("cash flow source income is copied once and never overwrites saved cash rec
   assert.equal(saved.captured.financialCreates.length, 0);
 });
 
-function submissionFixture(options: { reportStatus?: string; versionStatus?: string; submittedAt?: Date | null; readiness?: "READY" | "NEEDS_REVIEW" | "BLOCKED"; actor?: boolean } = {}) {
+function submissionFixture(options: { reportStatus?: string; versionStatus?: string; submittedAt?: Date | null; readiness?: "READY" | "NEEDS_REVIEW" | "BLOCKED"; checks?: SubmissionReadinessCheck[]; actor?: boolean } = {}) {
   const captured = { reportUpdates: 0, versionUpdates: 0, obligationUpdates: 0, audits: [] as Record<string, unknown>[] };
   const transaction = {
     user: { findFirst: async () => options.actor === false ? null : { id: "internal-admin" } },
@@ -262,7 +263,7 @@ function submissionFixture(options: { reportStatus?: string; versionStatus?: str
     grantReportingObligation: { update: async () => { captured.obligationUpdates += 1; return {}; } },
     auditLog: { create: async ({ data }: { data: Record<string, unknown> }) => { captured.audits.push(data); return {}; } },
   };
-  const editor = { quarterlyCashFlow: { submissionReadiness: { state: options.readiness ?? "READY", checks: [], attentionCount: 0 } } } as never;
+  const editor = { quarterlyCashFlow: { submissionReadiness: { state: options.readiness ?? "READY", checks: options.checks ?? [], attentionCount: 0 } } } as never;
   return { transaction, captured, editor };
 }
 
@@ -298,6 +299,26 @@ test("NEEDS_REVIEW submits only after acknowledgement and repeated submitted req
   assert.equal(result.alreadySubmitted, true);
   assert.equal(submitted.captured.versionUpdates, 0);
   assert.equal(submitted.captured.audits.length, 0);
+});
+
+test("submission audit immutably snapshots actionable warnings without the parent summary", async () => {
+  const checks: SubmissionReadinessCheck[] = [
+    { id: "reconciliation", group: "Financial Information", title: "Financial reconciliation", detail: "Review notices need attention.", status: "NEEDS_REVIEW" },
+    { id: "cash", parentCheckId: "reconciliation", group: "Financial Information", title: "Recorded cash position", detail: "Expenditure exceeds cash.", status: "NEEDS_REVIEW" },
+    { id: "april", group: "Bank Evidence", title: "April statement", detail: "Difference -227.80.", status: "NEEDS_REVIEW" },
+  ];
+  const fixture = submissionFixture({ readiness: "NEEDS_REVIEW", checks });
+  await submitGrantReport("report-1", { acknowledgeWarnings: true }, "internal-admin", runner(fixture.transaction), async () => ({ ok: true } as never), async () => fixture.editor);
+  assert.equal(fixture.captured.audits.length, 1);
+  const metadata = fixture.captured.audits[0].metadata as Record<string, unknown>;
+  assert.equal(metadata.readinessState, "NEEDS_REVIEW");
+  assert.equal(metadata.warningAcknowledged, true);
+  assert.equal(metadata.readinessWarningSnapshotVersion, 1);
+  assert.deepEqual(metadata.readinessWarnings, [
+    { id: "cash", group: "Financial Information", title: "Recorded cash position", detail: "Expenditure exceeds cash.", status: "NEEDS_REVIEW" },
+    { id: "april", group: "Bank Evidence", title: "April statement", detail: "Difference -227.80.", status: "NEEDS_REVIEW" },
+  ]);
+  assert.deepEqual(checks[0].title, "Financial reconciliation");
 });
 
 test("submission requires an active database SUPER_ADMIN and never mutates financial lines", async () => {

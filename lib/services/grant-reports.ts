@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db/prisma";
 import { findMatchingQuarterlyExpenditureIncome, getGrantReportEditor, withGrantReportingTransaction } from "@/lib/repositories/grant-reports";
 import type { CreateGrantAwardInput, CreateGrantReportingObligationInput, SaveGrantReportSectionInput, SubmitGrantReportInput } from "@/lib/validators/grant-reports";
 import { GRANT_AWARD_STAGING_ENTITY } from "@/lib/services/grant-award-agreements";
+import { selectSubmissionAcknowledgementWarnings } from "@/lib/grant-reports/submission-readiness";
 
 export class GrantReportingServiceError extends Error {
   constructor(message: string, public readonly status: number) {
@@ -419,7 +420,12 @@ export async function submitGrantReport(
           action: "grant.report.submitted",
           entityType: "GrantReportVersion",
           entityId: version.id,
-          metadata: json({ reportId, reportVersionId: version.id, versionNumber: version.versionNumber, reportType: version.reportType, obligationId: current.obligationId, readinessState: readiness.state, warningAcknowledged: readiness.state === "NEEDS_REVIEW" && input.acknowledgeWarnings }),
+          metadata: json({
+            reportId, reportVersionId: version.id, versionNumber: version.versionNumber, reportType: version.reportType, obligationId: current.obligationId,
+            readinessState: readiness.state, warningAcknowledged: readiness.state === "NEEDS_REVIEW" && input.acknowledgeWarnings,
+            readinessWarningSnapshotVersion: 1,
+            readinessWarnings: selectSubmissionAcknowledgementWarnings(readiness.checks).map((check) => ({ id: check.id, group: check.group, title: check.title, detail: check.detail, status: check.status })),
+          }),
         },
       });
       return { alreadySubmitted: false };

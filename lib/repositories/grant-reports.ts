@@ -283,7 +283,84 @@ export async function findMatchingQuarterlyExpenditureIncome(
   return null;
 }
 
-export async function getGrantReportEditor(reportId: string, client: Prisma.TransactionClient | typeof prisma = prisma) {
+function readSubmissionAuditMetadata(metadata: Prisma.JsonValue | null) {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return { readiness: null, acknowledged: false, warnings: null };
+  const readiness = metadata.readinessState === "READY" || metadata.readinessState === "NEEDS_REVIEW" ? metadata.readinessState : null;
+  const acknowledged = metadata.warningAcknowledged === true;
+  if (metadata.readinessWarningSnapshotVersion !== 1 || !Array.isArray(metadata.readinessWarnings)) return { readiness, acknowledged, warnings: null };
+  const warnings: Array<{ id: string; group: string; title: string; detail: string }> = [];
+  for (const item of metadata.readinessWarnings) {
+    if (!item || typeof item !== "object" || Array.isArray(item) || typeof item.id !== "string" || typeof item.group !== "string" || typeof item.title !== "string" || typeof item.detail !== "string" || item.status !== "NEEDS_REVIEW") return { readiness, acknowledged, warnings: null };
+    warnings.push({ id: item.id, group: item.group, title: item.title, detail: item.detail });
+  }
+  return { readiness, acknowledged, warnings };
+}
+
+export async function getGrantReportSubmissionHistory(reportId: string, client: Prisma.TransactionClient | typeof prisma = prisma) {
+  const current = await client.grantReport.findUnique({ where: { id: reportId }, select: { grantAwardId: true } });
+  if (!current) return null;
+  const reports = await client.grantReport.findMany({
+    where: { grantAwardId: current.grantAwardId, versions: { some: { submittedAt: { not: null } } } },
+    select: {
+      id: true,
+      currentVersionNumber: true,
+      obligation: { select: { title: true, type: true } },
+      versions: {
+        where: { submittedAt: { not: null } },
+        select: {
+          id: true, versionNumber: true, status: true, submittedAt: true,
+          reportingPeriodStart: true, reportingPeriodEnd: true,
+          submittedBy: { select: { firstName: true, lastName: true } },
+          certifications: {
+            select: { party: true, nameSnapshot: true, designationSnapshot: true, certificationDate: true, digitallyConfirmed: true, confirmedAt: true },
+            orderBy: { displayOrder: "asc" },
+          },
+        },
+        orderBy: { versionNumber: "desc" },
+        take: 20,
+      },
+    },
+    orderBy: { createdAt: "desc" },
+    take: 100,
+  });
+  const versionIds = reports.flatMap((report) => report.versions.map((version) => version.id));
+  const submissionAudits = versionIds.length ? await client.auditLog.findMany({
+    where: { action: "grant.report.submitted", entityType: "GrantReportVersion", entityId: { in: versionIds } },
+    select: { entityId: true, metadata: true },
+    orderBy: { createdAt: "desc" },
+    take: versionIds.length,
+  }) : [];
+  const auditByVersion = new Map(submissionAudits.map((audit) => [audit.entityId, audit.metadata]));
+  return reports.flatMap((report) => report.versions.map((version) => {
+    const submissionAudit = readSubmissionAuditMetadata(auditByVersion.get(version.id) ?? null);
+    return {
+      reportId: report.id,
+      versionId: version.id,
+      versionNumber: version.versionNumber,
+      reportTitle: report.obligation.title,
+      reportType: report.obligation.type,
+      versionStatus: version.status,
+      isCurrentVersion: version.versionNumber === report.currentVersionNumber,
+      submittedAt: version.submittedAt?.toISOString() ?? null,
+      submittedBy: version.submittedBy ? [version.submittedBy.firstName, version.submittedBy.lastName].filter(Boolean).join(" ") || "Internal user" : null,
+      recordedReadiness: submissionAudit.readiness,
+      warningsAcknowledged: submissionAudit.acknowledged,
+      readinessWarnings: submissionAudit.warnings,
+      reportingPeriodStart: dateValue(version.reportingPeriodStart),
+      reportingPeriodEnd: dateValue(version.reportingPeriodEnd),
+      certifications: version.certifications.map((certification) => ({
+        party: certification.party,
+        name: certification.nameSnapshot,
+        designation: certification.designationSnapshot,
+        certificationDate: dateValue(certification.certificationDate),
+        digitallyConfirmed: certification.digitallyConfirmed,
+        confirmedAt: dateValue(certification.confirmedAt),
+      })),
+    };
+  })).sort((left, right) => (right.submittedAt ?? "").localeCompare(left.submittedAt ?? ""));
+}
+
+export async function getGrantReportEditor(reportId: string, client: Prisma.TransactionClient | typeof prisma = prisma, submittedVersionNumber?: number) {
   const report = await client.grantReport.findUnique({
     where: { id: reportId },
     select: {
@@ -311,7 +388,7 @@ export async function getGrantReportEditor(reportId: string, client: Prisma.Tran
   if (!report) return null;
 
   const version = await client.grantReportVersion.findUnique({
-    where: { grantReportId_versionNumber: { grantReportId: report.id, versionNumber: report.currentVersionNumber } },
+    where: { grantReportId_versionNumber: { grantReportId: report.id, versionNumber: submittedVersionNumber ?? report.currentVersionNumber } },
     include: {
       indicators: { orderBy: [{ displayOrder: "asc" }, { createdAt: "asc" }] },
       beneficiaryBreakdowns: { orderBy: [{ displayOrder: "asc" }, { createdAt: "asc" }] },
@@ -348,9 +425,9 @@ export async function getGrantReportEditor(reportId: string, client: Prisma.Tran
       documents: { include: { file: { select: { originalFilename: true, mimeType: true, fileSize: true, createdAt: true } }, indicator: { select: { id: true, objective: true } }, uploadedBy: { select: { firstName: true, lastName: true, email: true } } }, orderBy: { uploadedAt: "desc" } },
     },
   });
-  if (!version) return null;
+  if (!version || (submittedVersionNumber !== undefined && !version.submittedAt)) return null;
 
-  const editable = version.status === "DRAFT" && !["SUBMITTED", "APPROVED", "ARCHIVED"].includes(report.status);
+  const editable = submittedVersionNumber === undefined && version.status === "DRAFT" && !["SUBMITTED", "APPROVED", "ARCHIVED"].includes(report.status);
   const periodStart = version.reportingPeriodStart ?? (editable ? report.obligation.reportingPeriodStart : null);
   const periodEnd = version.reportingPeriodEnd ?? (editable ? report.obligation.reportingPeriodEnd : null);
   const dateFilter = periodStart || periodEnd ? { gte: periodStart ?? undefined, lte: periodEnd ?? undefined } : undefined;
@@ -508,6 +585,7 @@ export async function getGrantReportEditor(reportId: string, client: Prisma.Tran
       versionNumber: version.versionNumber,
       status: version.status,
       editable,
+      historical: submittedVersionNumber !== undefined && version.versionNumber !== report.currentVersionNumber,
       currency: version.currency,
       completion,
       submittedAt: dateValue(version.submittedAt),
