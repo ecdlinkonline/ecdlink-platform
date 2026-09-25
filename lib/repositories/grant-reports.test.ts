@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { Prisma } from "@prisma/client";
-import { buildGrantReportMetrics, buildGrantReportWhere, findMatchingQuarterlyExpenditureIncome, getGrantReportSubmissionHistory } from "./grant-reports";
+import { buildGrantReportMetrics, buildGrantReportWhere, findMatchingQuarterlyExpenditureIncome, getGrantAwardReportingLifecycleByReportId, getGrantReportSubmissionHistory } from "./grant-reports";
 
 test("submission history is award-scoped, bounded and uses submitted version evidence", async () => {
   const calls: Array<Record<string, unknown>> = [];
@@ -58,6 +58,20 @@ test("submission history does not enumerate award reports for an unknown report"
 test("grant report writes use a bounded transaction timeout suitable for remote databases", () => {
   const source = readFileSync(new URL("./grant-reports.ts", import.meta.url), "utf8");
   assert.match(source, /prisma\.\$transaction\(operation, \{ timeout: 15_000 \}\)/);
+  assert.match(source, /TransactionIsolationLevel\.Serializable/);
+});
+
+test("award reporting lifecycle is bounded, chronological and exposes persisted plus derived state", async () => {
+  const calls: Array<Record<string, unknown>> = [];
+  const client = {
+    grantReport: { findUnique: async () => ({ grantAwardId: "award-1" }) },
+    grantAward: { findUnique: async (args: Record<string, unknown>) => { calls.push(args); return { id: "award-1", awardNumber: "AW-1", title: "Award", status: "ACTIVE", obligations: [{ id: "obligation-1", title: "Q1", type: "QUARTERLY_CASH_FLOW", basis: "QUARTER", financialYear: "2026", quarter: 1, reportingPeriodStart: new Date("2026-04-01"), reportingPeriodEnd: new Date("2026-06-30"), dueAt: new Date("2026-07-15"), status: "SUBMITTED", report: { id: "report-1", status: "SUBMITTED", currentVersionNumber: 1, versions: [{ submittedAt: new Date("2026-07-10") }] } }] }; } },
+  };
+  const lifecycle = await getGrantAwardReportingLifecycleByReportId("report-1", client as never, new Date("2026-09-24"));
+  assert.equal((calls[0].select as { obligations: { take: number } }).obligations.take, 200);
+  assert.equal(lifecycle?.items[0].progressState, "SUBMITTED");
+  assert.equal(lifecycle?.items[0].dueState, null);
+  assert.equal(lifecycle?.items[0].nextPeriodProposal?.quarter, 2);
 });
 
 test("report filters produce server-side persisted-data predicates", () => {

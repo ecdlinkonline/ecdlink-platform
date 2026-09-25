@@ -89,10 +89,10 @@ test("a sponsorship commitment without a linked FundingProject is rejected", asy
 test("obligation creation eagerly creates Draft report version 1 and audits the internal actor", async () => {
   const captured: { obligation?: Record<string, unknown>; report?: Record<string, unknown>; audit?: Record<string, unknown> } = {};
   const transaction = {
-    grantAward: { findUnique: async () => ({ id: "award-1", currency: "ZAR" }) },
-    user: { findUnique: async () => ({ id: "internal-user-1", firstName: "Admin", lastName: "User" }) },
+    grantAward: { findUnique: async () => ({ id: "award-1", currency: "ZAR", status: "ACTIVE" }) },
+    user: { findUnique: async () => ({ id: "internal-user-1", firstName: "Admin", lastName: "User", role: "SUPER_ADMIN", status: "ACTIVE" }) },
     grantTranche: { findFirst: async () => null },
-    grantReportingObligation: { create: async ({ data }: { data: Record<string, unknown> }) => { captured.obligation = data; return { id: "obligation-1", ...data }; } },
+    grantReportingObligation: { findFirst: async () => null, create: async ({ data }: { data: Record<string, unknown> }) => { captured.obligation = data; return { id: "obligation-1", ...data }; } },
     grantReport: { create: async ({ data }: { data: Record<string, unknown> }) => { captured.report = data; return { id: "report-1", ...data }; } },
     auditLog: { create: async ({ data }: { data: Record<string, unknown> }) => { captured.audit = data; return { id: "audit-1" }; } },
   };

@@ -5,10 +5,15 @@ import { prisma } from "@/lib/db/prisma";
 import { buildSuggestedGrantIndicators, dbeQuarterlyCashFlowExpenseCategories, dbeQuarterlyExpenditureCategories, grantReportCompletion, mapQuarterlyExpenditureIncomeToCashReceived, quarterlyCashFlowCompletion, quarterlyCashFlowTotals, quarterlyExpenditureCompletion, resolveGrantReportTemplate } from "@/lib/grant-reports/editor";
 import { buildFinancialReconciliation } from "@/lib/grant-reports/financial-reconciliation";
 import { buildQuarterlySubmissionReadiness } from "@/lib/grant-reports/submission-readiness";
+import { deriveGrantReportDueState, deriveGrantReportProgressState, proposeNextQuarterlyReportingPeriod } from "@/lib/grant-reports/lifecycle";
 import type { GrantReportFiltersInput } from "@/lib/validators/grant-reports";
 
 export function withGrantReportingTransaction<T>(operation: (tx: Prisma.TransactionClient) => Promise<T>) {
   return prisma.$transaction(operation, { timeout: 15_000 });
+}
+
+export function withSerializableGrantReportingTransaction<T>(operation: (tx: Prisma.TransactionClient) => Promise<T>) {
+  return prisma.$transaction(operation, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 15_000 });
 }
 
 const partyInclude = {
@@ -182,8 +187,14 @@ export async function getGrantReportWorkspace(filters: GrantReportFiltersInput =
       funder: partyName(obligation.award.organisations),
       type: obligation.type,
       basis: obligation.basis,
+      reportingPeriodStart: dateValue(obligation.reportingPeriodStart),
+      reportingPeriodEnd: dateValue(obligation.reportingPeriodEnd),
+      financialYear: obligation.financialYear,
+      quarter: obligation.quarter,
       dueAt: obligation.dueAt.toISOString(),
       status: obligation.status,
+      progressState: deriveGrantReportProgressState({ obligationStatus: obligation.status, reportStatus: obligation.report?.status ?? null }),
+      dueState: deriveGrantReportDueState({ dueAt: obligation.dueAt, obligationStatus: obligation.status, today: now }),
       report: obligation.report,
       tranche: obligation.tranche,
     })),
@@ -358,6 +369,43 @@ export async function getGrantReportSubmissionHistory(reportId: string, client: 
       })),
     };
   })).sort((left, right) => (right.submittedAt ?? "").localeCompare(left.submittedAt ?? ""));
+}
+
+export async function getGrantAwardReportingLifecycleByReportId(reportId: string, client: Prisma.TransactionClient | typeof prisma = prisma, today: Date = new Date()) {
+  const current = await client.grantReport.findUnique({ where: { id: reportId }, select: { grantAwardId: true } });
+  if (!current) return null;
+  const award = await client.grantAward.findUnique({
+    where: { id: current.grantAwardId },
+    select: {
+      id: true, awardNumber: true, title: true, status: true,
+      obligations: {
+        orderBy: [{ reportingPeriodStart: "asc" }, { dueAt: "asc" }, { createdAt: "asc" }],
+        take: 200,
+        select: {
+          id: true, type: true, basis: true, title: true, reportingPeriodStart: true, reportingPeriodEnd: true,
+          financialYear: true, quarter: true, dueAt: true, status: true,
+          report: { select: { id: true, status: true, currentVersionNumber: true, versions: { where: { submittedAt: { not: null } }, orderBy: { submittedAt: "desc" }, take: 1, select: { submittedAt: true } } } },
+        },
+      },
+    },
+  });
+  if (!award) return null;
+  const items = award.obligations.map((obligation) => {
+    const proposal = proposeNextQuarterlyReportingPeriod(obligation);
+    const alreadyExists = proposal ? award.obligations.some((candidate) => candidate.type === proposal.reportType && candidate.reportingPeriodStart?.toISOString().slice(0, 10) === proposal.reportingPeriodStart && candidate.reportingPeriodEnd?.toISOString().slice(0, 10) === proposal.reportingPeriodEnd) : false;
+    const sourceSubmitted = obligation.status === "SUBMITTED" && obligation.report?.status === "SUBMITTED";
+    return {
+      id: obligation.id, title: obligation.title, type: obligation.type,
+      reportingPeriodStart: dateValue(obligation.reportingPeriodStart), reportingPeriodEnd: dateValue(obligation.reportingPeriodEnd),
+      financialYear: obligation.financialYear, quarter: obligation.quarter, dueAt: obligation.dueAt.toISOString(),
+      obligationStatus: obligation.status, reportId: obligation.report?.id ?? null, reportStatus: obligation.report?.status ?? null,
+      currentVersion: obligation.report?.currentVersionNumber ?? null, submittedAt: dateValue(obligation.report?.versions[0]?.submittedAt),
+      progressState: deriveGrantReportProgressState({ obligationStatus: obligation.status, reportStatus: obligation.report?.status ?? null }),
+      dueState: deriveGrantReportDueState({ dueAt: obligation.dueAt, obligationStatus: obligation.status, today }),
+      nextPeriodProposal: award.status === "ACTIVE" && sourceSubmitted && !alreadyExists ? proposal : null,
+    };
+  });
+  return { award: { id: award.id, awardNumber: award.awardNumber, title: award.title, status: award.status }, items };
 }
 
 export async function getGrantReportEditor(reportId: string, client: Prisma.TransactionClient | typeof prisma = prisma, submittedVersionNumber?: number) {

@@ -1,12 +1,14 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
-import { findMatchingQuarterlyExpenditureIncome, getGrantReportEditor, withGrantReportingTransaction } from "@/lib/repositories/grant-reports";
+import { findMatchingQuarterlyExpenditureIncome, getGrantReportEditor, withGrantReportingTransaction, withSerializableGrantReportingTransaction } from "@/lib/repositories/grant-reports";
+import { proposeNextQuarterlyReportingPeriod } from "@/lib/grant-reports/lifecycle";
+import { createGrantReportingObligationSchema } from "@/lib/validators/grant-reports";
 import type { CreateGrantAwardInput, CreateGrantReportingObligationInput, SaveGrantReportSectionInput, SubmitGrantReportInput } from "@/lib/validators/grant-reports";
 import { GRANT_AWARD_STAGING_ENTITY } from "@/lib/services/grant-award-agreements";
 import { selectSubmissionAcknowledgementWarnings } from "@/lib/grant-reports/submission-readiness";
 
 export class GrantReportingServiceError extends Error {
-  constructor(message: string, public readonly status: number) {
+  constructor(message: string, public readonly status: number, public readonly details?: unknown) {
     super(message);
   }
 }
@@ -20,6 +22,10 @@ function acceptableCommitmentStatus(status: string) {
 }
 
 export type GrantReportingTransactionRunner = <T>(operation: (tx: Prisma.TransactionClient) => Promise<T>) => Promise<T>;
+
+function isSerializationConflict(error: unknown) {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034";
+}
 
 export async function createGrantAward(input: CreateGrantAwardInput, actorUserId: string, runTransaction: GrantReportingTransactionRunner = withGrantReportingTransaction) {
   return runTransaction(async (tx) => {
@@ -96,14 +102,15 @@ export async function createGrantAward(input: CreateGrantAwardInput, actorUserId
   });
 }
 
-export async function createGrantReportingObligation(input: CreateGrantReportingObligationInput, actorUserId: string, runTransaction: GrantReportingTransactionRunner = withGrantReportingTransaction) {
-  return runTransaction(async (tx) => {
+async function createGrantReportingObligationInTransaction(tx: Prisma.TransactionClient, input: CreateGrantReportingObligationInput, actorUserId: string, sourceObligationId?: string) {
     const [award, actor] = await Promise.all([
-      tx.grantAward.findUnique({ where: { id: input.grantAwardId }, select: { id: true, currency: true } }),
-      tx.user.findUnique({ where: { id: actorUserId }, select: { id: true, firstName: true, lastName: true } }),
+      tx.grantAward.findUnique({ where: { id: input.grantAwardId }, select: { id: true, currency: true, status: true } }),
+      tx.user.findUnique({ where: { id: actorUserId }, select: { id: true, firstName: true, lastName: true, role: true, status: true } }),
     ]);
     if (!award) throw new GrantReportingServiceError("Grant award not found.", 404);
-    if (!actor) throw new GrantReportingServiceError("The internal audit actor was not found.", 403);
+    if (award.status !== "ACTIVE") throw new GrantReportingServiceError("Reporting periods can only be created for an active grant award.", 409);
+    if (!actor || actor.status !== "ACTIVE" || actor.role !== "SUPER_ADMIN") throw new GrantReportingServiceError("Active Super Admin access is required.", 403);
+    if (input.reportingPeriodStart && input.reportingPeriodEnd && input.reportingPeriodStart >= input.reportingPeriodEnd) throw new GrantReportingServiceError("Reporting period end must be after its start.", 422);
 
     let tranche: { id: string; trancheNumber: number; scheduledAmount: Prisma.Decimal } | null = null;
     if (input.grantTrancheId) {
@@ -111,11 +118,68 @@ export async function createGrantReportingObligation(input: CreateGrantReporting
       if (!tranche) throw new GrantReportingServiceError("The selected tranche does not belong to this award.", 422);
     }
 
+    if (input.reportingPeriodStart && input.reportingPeriodEnd) {
+      const collision = await tx.grantReportingObligation.findFirst({
+        where: {
+          grantAwardId: input.grantAwardId,
+          type: input.type,
+          reportingPeriodStart: { lte: input.reportingPeriodEnd },
+          reportingPeriodEnd: { gte: input.reportingPeriodStart },
+        },
+        select: { id: true, reportingPeriodStart: true, reportingPeriodEnd: true, report: { select: { id: true } } },
+      });
+      if (collision) {
+        const exact = collision.reportingPeriodStart?.getTime() === input.reportingPeriodStart.getTime() && collision.reportingPeriodEnd?.getTime() === input.reportingPeriodEnd.getTime();
+        throw new GrantReportingServiceError(exact ? "This reporting period already exists." : "This reporting period overlaps an existing obligation of the same report type.", 409, { existingObligationId: collision.id, existingReportId: collision.report?.id ?? null });
+      }
+    }
+
     const obligation = await tx.grantReportingObligation.create({ data: { grantAwardId: input.grantAwardId, grantTrancheId: input.grantTrancheId, type: input.type, basis: input.basis, title: input.title, description: input.description, reportingPeriodStart: input.reportingPeriodStart, reportingPeriodEnd: input.reportingPeriodEnd, financialYear: input.financialYear, quarter: input.quarter, dueAt: input.dueAt, status: "OPEN", requiresFunderApproval: input.requiresFunderApproval, requiresSuperAdminApproval: input.requiresSuperAdminApproval, createdByUserId: actorUserId } });
     const report = await tx.grantReport.create({ data: { grantAwardId: award.id, obligationId: obligation.id, status: "DRAFT", currentVersionNumber: 1, createdByUserId: actorUserId, versions: { create: { versionNumber: 1, status: "DRAFT", reportType: input.type, reportingPeriodStart: input.reportingPeriodStart, reportingPeriodEnd: input.reportingPeriodEnd, financialYear: input.financialYear, quarter: input.quarter, trancheNumberSnapshot: tranche?.trancheNumber, trancheAmountSnapshot: tranche?.scheduledAmount, currency: award.currency, preparedByUserId: actorUserId, preparerNameSnapshot: [actor.firstName, actor.lastName].filter(Boolean).join(" ") || "Super Admin", preparerDesignationSnapshot: "Super Admin", certificationAcknowledged: false } } } });
-    await tx.auditLog.create({ data: { actorUserId, action: "grant.reporting_obligation.create", entityType: "GrantReportingObligation", entityId: obligation.id, after: json(obligation), metadata: json({ grantAwardId: award.id, reportId: report.id, initialVersion: 1 }) } });
+    await tx.auditLog.create({ data: { actorUserId, action: sourceObligationId ? "grant.reporting_obligation.next_period.create" : "grant.reporting_obligation.create", entityType: "GrantReportingObligation", entityId: obligation.id, after: json(obligation), metadata: json({ grantAwardId: award.id, sourceObligationId: sourceObligationId ?? null, newObligationId: obligation.id, reportId: report.id, reportType: input.type, reportingPeriodStart: input.reportingPeriodStart, reportingPeriodEnd: input.reportingPeriodEnd, financialYear: input.financialYear, quarter: input.quarter, dueAt: input.dueAt, initialVersion: 1 }) } });
     return { obligation, report };
-  });
+}
+
+async function existingPeriodDetails(input: CreateGrantReportingObligationInput) {
+  if (!input.reportingPeriodStart || !input.reportingPeriodEnd) return null;
+  return prisma.grantReportingObligation.findFirst({ where: { grantAwardId: input.grantAwardId, type: input.type, reportingPeriodStart: input.reportingPeriodStart, reportingPeriodEnd: input.reportingPeriodEnd }, select: { id: true, report: { select: { id: true } } } });
+}
+
+export async function createGrantReportingObligation(input: CreateGrantReportingObligationInput, actorUserId: string, runTransaction: GrantReportingTransactionRunner = withSerializableGrantReportingTransaction) {
+  try {
+    return await runTransaction((tx) => createGrantReportingObligationInTransaction(tx, input, actorUserId));
+  } catch (error) {
+    if (!isSerializationConflict(error)) throw error;
+    const existing = await existingPeriodDetails(input);
+    throw new GrantReportingServiceError("This reporting period was created by another request.", 409, existing ? { existingObligationId: existing.id, existingReportId: existing.report?.id ?? null } : undefined);
+  }
+}
+
+export async function createNextGrantReportingPeriod(sourceObligationId: string, grantAwardId: string, dueAt: Date, actorUserId: string, runTransaction: GrantReportingTransactionRunner = withSerializableGrantReportingTransaction) {
+  try {
+    return await runTransaction(async (tx) => {
+      const source = await tx.grantReportingObligation.findUnique({
+        where: { id: sourceObligationId },
+        select: { id: true, grantAwardId: true, type: true, basis: true, title: true, reportingPeriodStart: true, reportingPeriodEnd: true, financialYear: true, quarter: true, requiresFunderApproval: true, requiresSuperAdminApproval: true, status: true, report: { select: { status: true } } },
+      });
+      if (!source) throw new GrantReportingServiceError("Source reporting obligation not found.", 404);
+      if (source.grantAwardId !== grantAwardId) throw new GrantReportingServiceError("The source obligation does not belong to this award.", 422);
+      if (source.status !== "SUBMITTED" || source.report?.status !== "SUBMITTED") throw new GrantReportingServiceError("The source reporting period must be submitted before the next period can be created.", 409);
+      const proposal = proposeNextQuarterlyReportingPeriod(source);
+      if (!proposal) throw new GrantReportingServiceError("A canonical next period is not available for this obligation.", 422);
+      const input = createGrantReportingObligationSchema.parse({
+        grantAwardId, type: proposal.reportType, basis: "QUARTER",
+        title: `${proposal.reportType === "QUARTERLY_CASH_FLOW" ? "Quarterly Cash Flow Report" : "Quarterly Expenditure Report"} - Q${proposal.quarter} ${proposal.financialYear}`,
+        reportingPeriodStart: proposal.reportingPeriodStart, reportingPeriodEnd: proposal.reportingPeriodEnd,
+        financialYear: proposal.financialYear, quarter: proposal.quarter, dueAt,
+        requiresFunderApproval: source.requiresFunderApproval, requiresSuperAdminApproval: source.requiresSuperAdminApproval,
+      });
+      return createGrantReportingObligationInTransaction(tx, input, actorUserId, source.id);
+    });
+  } catch (error) {
+    if (!isSerializationConflict(error)) throw error;
+    throw new GrantReportingServiceError("This reporting period was created by another request.", 409);
+  }
 }
 
 const certificationConfirmationText = "I confirm that the information in this grant report is accurate and complete to the best of my knowledge.";

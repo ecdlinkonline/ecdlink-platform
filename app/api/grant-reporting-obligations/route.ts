@@ -12,7 +12,7 @@ export async function POST(request: Request) {
     return apiSuccess(await createGrantReportingObligation(input, context.internalUser.id), 201);
   } catch (error) {
     if (error instanceof ZodError) return validationError(error);
-    if (error instanceof GrantReportingServiceError) return apiError(error.message, error.status);
+    if (error instanceof GrantReportingServiceError) return apiError(error.message, error.status, error.details);
     return apiError("Reporting obligation could not be created.", 500);
   }
 }
