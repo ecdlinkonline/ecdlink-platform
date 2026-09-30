@@ -23,6 +23,18 @@ export const grantReportFiltersSchema = z.object({
   organisationId: optionalId,
 });
 
+export const grantReportingMonitoringFiltersSchema = z.object({
+  monitor: z.enum(["all", "attention", "due_soon", "overdue", "draft", "submitted"]).default("all"),
+  query: z.string().trim().max(100).optional(),
+  centreId: optionalId,
+  type: z.enum(["INTERIM", "FINAL", "QUARTERLY_EXPENDITURE", "QUARTERLY_CASH_FLOW", "CUSTOM"]).optional(),
+  financialYear: z.string().trim().max(20).optional().or(z.literal("").transform(() => undefined)),
+  quarter: z.preprocess((value) => value === "" || value === undefined ? undefined : value, z.coerce.number().int().min(1).max(4).optional()),
+  page: z.coerce.number().int().min(1).default(1),
+});
+
+export type GrantReportingMonitoringFiltersInput = z.infer<typeof grantReportingMonitoringFiltersSchema>;
+
 export const createGrantAwardSchema = z.object({
   sourceType: z.enum(["FUNDING_APPLICATION", "SPONSORSHIP_COMMITMENT", "MANUAL"]),
   fundingApplicationId: optionalId,

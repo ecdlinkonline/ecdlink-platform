@@ -34,21 +34,6 @@ function dateValue(value: Date | null | undefined) {
   return value?.toISOString() ?? null;
 }
 
-export function buildGrantReportMetrics(
-  activeAwards: number,
-  reportsDue: number,
-  statusCounts: ReadonlyMap<string, number>,
-) {
-  return {
-    activeAwards,
-    reportsDue,
-    draftReports: statusCounts.get("DRAFT") ?? 0,
-    submittedReports: statusCounts.get("SUBMITTED") ?? 0,
-    returnedReports: statusCounts.get("RETURNED") ?? 0,
-    approvedReports: statusCounts.get("APPROVED") ?? 0,
-  };
-}
-
 export function buildGrantReportWhere(filters: GrantReportFiltersInput): Prisma.GrantReportWhereInput {
   const query = filters.query?.trim();
   const organisationFilter = filters.organisationId ? {
@@ -81,12 +66,9 @@ export function buildGrantReportWhere(filters: GrantReportFiltersInput): Prisma.
 }
 
 export async function getGrantReportWorkspace(filters: GrantReportFiltersInput = {}) {
-  const now = new Date();
   const reportWhere = buildGrantReportWhere(filters);
-  const [activeAwards, reportsDue, statusGroups, reports, awards, obligations, centres, fundingOrganisations, donorOrganisations, projects, applications, commitments] = await Promise.all([
-    prisma.grantAward.count({ where: { status: "ACTIVE" } }),
-    prisma.grantReportingObligation.count({ where: { dueAt: { lte: now }, status: { in: ["PENDING", "OPEN", "OVERDUE"] } } }),
-    prisma.grantReport.groupBy({ by: ["status"], _count: { _all: true } }),
+  const now = new Date();
+  const [reports, awards, obligations, centres, fundingOrganisations, donorOrganisations, projects, applications, commitments] = await Promise.all([
     prisma.grantReport.findMany({
       where: reportWhere,
       include: {
@@ -139,9 +121,7 @@ export async function getGrantReportWorkspace(filters: GrantReportFiltersInput =
     prisma.sponsorshipCommitment.findMany({ where: { commitmentStatus: { in: ["Confirmed", "Partially Fulfilled", "Fulfilled"] }, grantAward: null }, select: { id: true, referenceNumber: true, committedAmount: true, donorOrganisationId: true, centreId: true, commitmentStatus: true, centre: { select: { centreName: true } }, donor: { select: { name: true, organisationName: true } }, project: { select: { fundingProjectId: true, title: true, fundingProject: { select: { title: true } } } } }, orderBy: { updatedAt: "desc" }, take: 200 }),
   ]);
 
-  const counts = new Map(statusGroups.map((group) => [group.status, group._count._all]));
   return {
-    metrics: buildGrantReportMetrics(activeAwards, reportsDue, counts),
     reports: reports.map((report) => ({
       id: report.id,
       title: report.obligation.title,

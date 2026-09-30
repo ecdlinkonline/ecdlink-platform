@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { canonicalQuarterlyDueDate, deriveGrantReportDueState, GRANT_REPORT_DUE_SOON_DAYS, proposeNextQuarterlyReportingPeriod } from "./lifecycle";
+import { canonicalQuarterlyDueDate, deriveGrantReportDueDetails, deriveGrantReportDueState, grantReportDueDateBounds, GRANT_REPORT_DUE_SOON_DAYS, proposeNextQuarterlyReportingPeriod } from "./lifecycle";
 
 test("date-only due states do not make due-today or terminal obligations overdue", () => {
   assert.equal(deriveGrantReportDueState({ dueAt: "2026-09-24T00:00:00.000Z", today: "2026-09-24T23:59:59+02:00", obligationStatus: "OPEN" }), "DUE_SOON");
@@ -9,6 +9,18 @@ test("date-only due states do not make due-today or terminal obligations overdue
   assert.equal(deriveGrantReportDueState({ dueAt: "2026-09-01", today: "2026-09-24", obligationStatus: "SUBMITTED" }), null);
   assert.equal(deriveGrantReportDueState({ dueAt: `2026-10-${String(8).padStart(2, "0")}`, today: "2026-09-24", obligationStatus: "OPEN" }), GRANT_REPORT_DUE_SOON_DAYS === 14 ? "DUE_SOON" : "UPCOMING");
   assert.equal(deriveGrantReportDueState({ dueAt: "2026-10-09", today: "2026-09-24", obligationStatus: "OPEN" }), "UPCOMING");
+});
+
+test("due details use UTC-safe date-only boundaries and clear singular/plural labels", () => {
+  const today = "2026-09-29T23:30:00+02:00";
+  assert.deepEqual(deriveGrantReportDueDetails({ dueAt: "2026-09-29", today, obligationStatus: "OPEN" }), { dueState: "DUE_SOON", daysFromDue: 0, label: "Due today" });
+  assert.equal(deriveGrantReportDueDetails({ dueAt: "2026-09-30", today, obligationStatus: "OPEN" }).label, "1 day remaining");
+  assert.equal(deriveGrantReportDueDetails({ dueAt: "2026-10-13", today, obligationStatus: "OPEN" }).label, "14 days remaining");
+  assert.equal(deriveGrantReportDueDetails({ dueAt: "2026-10-14", today, obligationStatus: "OPEN" }).dueState, "UPCOMING");
+  assert.equal(deriveGrantReportDueDetails({ dueAt: "2026-09-28", today, obligationStatus: "OPEN" }).label, "1 day overdue");
+  assert.equal(deriveGrantReportDueDetails({ dueAt: "2026-09-27", today, obligationStatus: "OPEN" }).label, "2 days overdue");
+  assert.deepEqual(deriveGrantReportDueDetails({ dueAt: "2026-09-01", today, obligationStatus: "WAIVED" }), { dueState: null, daysFromDue: null, label: null });
+  assert.deepEqual(grantReportDueDateBounds(today), { today: new Date("2026-09-29T00:00:00.000Z"), afterDueSoon: new Date("2026-10-14T00:00:00.000Z") });
 });
 
 test("canonical quarterly next-period proposals roll through the financial year", () => {

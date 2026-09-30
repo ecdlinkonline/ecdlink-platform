@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { Prisma } from "@prisma/client";
-import { buildGrantReportMetrics, buildGrantReportWhere, findMatchingQuarterlyExpenditureIncome, getGrantAwardReportingLifecycleByReportId, getGrantReportSubmissionHistory } from "./grant-reports";
+import { buildGrantReportWhere, findMatchingQuarterlyExpenditureIncome, getGrantAwardReportingLifecycleByReportId, getGrantReportSubmissionHistory } from "./grant-reports";
 
 test("submission history is award-scoped, bounded and uses submitted version evidence", async () => {
   const calls: Array<Record<string, unknown>> = [];
@@ -81,12 +81,6 @@ test("report filters produce server-side persisted-data predicates", () => {
   assert.equal(where.award?.centreId, "centre-1");
   assert.ok(where.award && "OR" in where.award);
   assert.ok(where.award && "organisations" in where.award);
-});
-
-test("workspace KPI metrics are derived from persisted count results with zero defaults", () => {
-  assert.deepEqual(buildGrantReportMetrics(3, 2, new Map([["DRAFT", 4], ["APPROVED", 7]])), {
-    activeAwards: 3, reportsDue: 2, draftReports: 4, submittedReports: 0, returnedReports: 0, approvedReports: 7,
-  });
 });
 
 test("cash flow income source matching is strictly award, centre, year and quarter scoped", async () => {

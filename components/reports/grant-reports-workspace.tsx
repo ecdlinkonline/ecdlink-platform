@@ -3,18 +3,20 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { CalendarClock, CheckCircle2, ChevronDown, ClipboardList, FileClock, FileText, HandCoins, SlidersHorizontal } from "lucide-react";
-import { DataTable, KpiCard, PageHeader, StatusBadge } from "@/components/design-system";
+import { ChevronDown, FileText, SlidersHorizontal } from "lucide-react";
+import { DataTable, PageHeader, StatusBadge } from "@/components/design-system";
 import { GrantAwardDialog } from "@/components/reports/grant-award-dialog";
 import { GrantObligationDialog } from "@/components/reports/grant-obligation-dialog";
+import { GrantReportingMonitoring } from "@/components/reports/grant-reporting-monitoring";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatGrantCurrency, formatGrantLabel, reportTypeLabels } from "@/lib/grant-reports/types";
 import { grantReportEmptyStateMessage } from "@/lib/grant-reports/presentation";
 import type { GrantReportWorkspaceData } from "@/lib/grant-reports/types";
-import type { GrantReportFiltersInput } from "@/lib/validators/grant-reports";
+import type { GrantReportingMonitoringData } from "@/lib/repositories/grant-report-monitoring";
+import type { GrantReportFiltersInput, GrantReportingMonitoringFiltersInput } from "@/lib/validators/grant-reports";
 
-const tabs = [{ id: "reports", label: "Reports" }, { id: "awards", label: "Grant Awards" }, { id: "obligations", label: "Reporting Obligations" }] as const;
+const tabs = [{ id: "monitoring", label: "Monitoring" }, { id: "reports", label: "Reports" }, { id: "awards", label: "Grant Awards" }, { id: "obligations", label: "Reporting Obligations" }] as const;
 type TabId = typeof tabs[number]["id"];
 
 
@@ -22,9 +24,9 @@ function dateLabel(value: string | null) {
   return value ? new Intl.DateTimeFormat("en-ZA", { dateStyle: "medium" }).format(new Date(value)) : "—";
 }
 
-export function GrantReportsWorkspace({ data, initialTab, filters }: { data: GrantReportWorkspaceData; initialTab?: string; filters: GrantReportFiltersInput }) {
+export function GrantReportsWorkspace({ data, monitoring, initialTab, filters, monitoringFilters }: { data: GrantReportWorkspaceData; monitoring: GrantReportingMonitoringData; initialTab?: string; filters: GrantReportFiltersInput; monitoringFilters: GrantReportingMonitoringFiltersInput }) {
   const router = useRouter();
-  const activeTab: TabId = tabs.some((tab) => tab.id === initialTab) ? initialTab as TabId : "reports";
+  const activeTab: TabId = tabs.some((tab) => tab.id === initialTab) ? initialTab as TabId : "monitoring";
   const refresh = () => router.refresh();
   const organisationOptions = [
     ...data.options.fundingOrganisations.map((organisation) => ({ label: `Funding · ${organisation.name}`, value: organisation.id })),
@@ -33,15 +35,8 @@ export function GrantReportsWorkspace({ data, initialTab, filters }: { data: Gra
 
   return <div className="space-y-6">
     <PageHeader eyebrow="Super Admin" title="Grant Reports" description="Oversee confirmed grant awards, reporting obligations and formal report lifecycles across ECDLink." actions={<><GrantAwardDialog data={data} onSuccess={refresh} /><GrantObligationDialog data={data} onSuccess={refresh} /><Link href="/dashboard/super-admin"><Button variant="secondary">Back to dashboard</Button></Link></>} />
-    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
-      <KpiCard label="Active Awards" value={String(data.metrics.activeAwards)} description="Confirmed active grants" icon={HandCoins} />
-      <KpiCard label="Reports Due" value={String(data.metrics.reportsDue)} description="Open and overdue" icon={CalendarClock} tone="warning" />
-      <KpiCard label="Draft Reports" value={String(data.metrics.draftReports)} description="Awaiting preparation" icon={FileClock} />
-      <KpiCard label="Submitted" value={String(data.metrics.submittedReports)} description="Under review" icon={ClipboardList} />
-      <KpiCard label="Returned" value={String(data.metrics.returnedReports)} description="Requires revision" icon={FileText} tone="warning" />
-      <KpiCard label="Approved" value={String(data.metrics.approvedReports)} description="Completed review" icon={CheckCircle2} tone="green" />
-    </div>
     <div className="flex gap-2 overflow-x-auto rounded-lg border border-brand-line bg-white p-2 dark:border-slate-800 dark:bg-slate-900">{tabs.map((tab) => <Link key={tab.id} href={`?tab=${tab.id}`} className={`shrink-0 rounded-lg px-4 py-2 text-sm font-bold ${activeTab === tab.id ? "bg-brand-navy text-white" : "text-slate-600 hover:bg-brand-accent dark:text-slate-300"}`}>{tab.label}</Link>)}</div>
+    {activeTab === "monitoring" ? <GrantReportingMonitoring data={monitoring} filters={monitoringFilters} centres={data.options.centres} /> : null}
     {activeTab === "reports" ? <ReportsSection data={data} filters={filters} organisations={organisationOptions} /> : null}
     {activeTab === "awards" ? <AwardsSection data={data} /> : null}
     {activeTab === "obligations" ? <ObligationsSection data={data} /> : null}

@@ -1,12 +1,22 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createGrantAwardSchema, createGrantReportingObligationSchema, saveGrantReportBeneficiariesSchema, saveGrantReportCertificationsSchema, saveGrantReportFinancialSchema, saveQuarterlyBankReconciliationSchema, saveQuarterlyCashFlowExpensesSchema, saveQuarterlyCashFlowGeneralSchema, saveQuarterlyCashReceivedSchema, saveQuarterlyExpenditureGeneralSchema, saveQuarterlyExpenditureSchema, saveQuarterlyIncomeSchema } from "./grant-reports";
+import { createGrantAwardSchema, createGrantReportingObligationSchema, grantReportingMonitoringFiltersSchema, saveGrantReportBeneficiariesSchema, saveGrantReportCertificationsSchema, saveGrantReportFinancialSchema, saveQuarterlyBankReconciliationSchema, saveQuarterlyCashFlowExpensesSchema, saveQuarterlyCashFlowGeneralSchema, saveQuarterlyCashReceivedSchema, saveQuarterlyExpenditureGeneralSchema, saveQuarterlyExpenditureSchema, saveQuarterlyIncomeSchema } from "./grant-reports";
 import { grantBankCategorisationActionSchema } from "./grant-bank-imports";
 
 const award = {
   sourceType: "MANUAL", centreId: "centre-1", fundingProjectId: "project-1", awardNumber: "AW-001", title: "Nutrition grant",
   awardedAmount: 1000, currency: "ZAR", startDate: "2026-08-01", organisationType: "FUNDING_ORGANISATION", fundingOrganisationId: "funder-1",
 };
+
+test("monitoring filters validate views, pagination and combined reporting dimensions", () => {
+  assert.deepEqual(grantReportingMonitoringFiltersSchema.parse({}), { monitor: "all", page: 1 });
+  assert.deepEqual(grantReportingMonitoringFiltersSchema.parse({ monitor: "attention", query: " Future ", centreId: "centre-1", type: "QUARTERLY_CASH_FLOW", financialYear: "2026", quarter: "2", page: "3" }), {
+    monitor: "attention", query: "Future", centreId: "centre-1", type: "QUARTERLY_CASH_FLOW", financialYear: "2026", quarter: 2, page: 3,
+  });
+  assert.equal(grantReportingMonitoringFiltersSchema.safeParse({ monitor: "unknown" }).success, false);
+  assert.equal(grantReportingMonitoringFiltersSchema.safeParse({ quarter: 5 }).success, false);
+  assert.equal(grantReportingMonitoringFiltersSchema.safeParse({ page: 0 }).success, false);
+});
 
 test("manual awards require exactly one explicit organisation and no source record", () => {
   assert.equal(createGrantAwardSchema.safeParse(award).success, true);
