@@ -24,22 +24,22 @@ function dateLabel(value: string | null) {
   return value ? new Intl.DateTimeFormat("en-ZA", { dateStyle: "medium" }).format(new Date(value)) : "—";
 }
 
-export function GrantReportsWorkspace({ data, monitoring, initialTab, filters, monitoringFilters }: { data: GrantReportWorkspaceData; monitoring: GrantReportingMonitoringData; initialTab?: string; filters: GrantReportFiltersInput; monitoringFilters: GrantReportingMonitoringFiltersInput }) {
+export function GrantReportsWorkspace({ data, monitoring, monitoringCentres, initialTab, filters, monitoringFilters }: { data: GrantReportWorkspaceData | null; monitoring: GrantReportingMonitoringData | null; monitoringCentres: GrantReportWorkspaceData["options"]["centres"]; initialTab?: string; filters: GrantReportFiltersInput; monitoringFilters: GrantReportingMonitoringFiltersInput }) {
   const router = useRouter();
   const activeTab: TabId = tabs.some((tab) => tab.id === initialTab) ? initialTab as TabId : "monitoring";
   const refresh = () => router.refresh();
-  const organisationOptions = [
+  const organisationOptions = data ? [
     ...data.options.fundingOrganisations.map((organisation) => ({ label: `Funding · ${organisation.name}`, value: organisation.id })),
     ...data.options.donorOrganisations.map((organisation) => ({ label: `Donor · ${organisation.name}`, value: organisation.id })),
-  ];
+  ] : [];
 
   return <div className="space-y-6">
-    <PageHeader eyebrow="Super Admin" title="Grant Reports" description="Oversee confirmed grant awards, reporting obligations and formal report lifecycles across ECDLink." actions={<><GrantAwardDialog data={data} onSuccess={refresh} /><GrantObligationDialog data={data} onSuccess={refresh} /><Link href="/dashboard/super-admin"><Button variant="secondary">Back to dashboard</Button></Link></>} />
+    <PageHeader eyebrow="Super Admin" title="Grant Reports" description="Oversee confirmed grant awards, reporting obligations and formal report lifecycles across ECDLink." actions={<>{activeTab === "awards" && data ? <GrantAwardDialog data={data} onSuccess={refresh} /> : <Link href="?tab=awards"><Button>Create Grant Award</Button></Link>}{activeTab === "obligations" && data ? <GrantObligationDialog data={data} onSuccess={refresh} /> : <Link href="?tab=obligations"><Button variant="secondary">Add Obligation</Button></Link>}<Link href="/dashboard/super-admin"><Button variant="secondary">Back to dashboard</Button></Link></>} />
     <div className="flex gap-2 overflow-x-auto rounded-lg border border-brand-line bg-white p-2 dark:border-slate-800 dark:bg-slate-900">{tabs.map((tab) => <Link key={tab.id} href={`?tab=${tab.id}`} className={`shrink-0 rounded-lg px-4 py-2 text-sm font-bold ${activeTab === tab.id ? "bg-brand-navy text-white" : "text-slate-600 hover:bg-brand-accent dark:text-slate-300"}`}>{tab.label}</Link>)}</div>
-    {activeTab === "monitoring" ? <GrantReportingMonitoring data={monitoring} filters={monitoringFilters} centres={data.options.centres} /> : null}
-    {activeTab === "reports" ? <ReportsSection data={data} filters={filters} organisations={organisationOptions} /> : null}
-    {activeTab === "awards" ? <AwardsSection data={data} /> : null}
-    {activeTab === "obligations" ? <ObligationsSection data={data} /> : null}
+    {activeTab === "monitoring" && monitoring ? <GrantReportingMonitoring data={monitoring} filters={monitoringFilters} centres={monitoringCentres} /> : null}
+    {activeTab === "reports" && data ? <ReportsSection data={data} filters={filters} organisations={organisationOptions} /> : null}
+    {activeTab === "awards" && data ? <AwardsSection data={data} /> : null}
+    {activeTab === "obligations" && data ? <ObligationsSection data={data} /> : null}
   </div>;
 }
 

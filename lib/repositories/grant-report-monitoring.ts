@@ -195,10 +195,18 @@ export async function getGrantReportingMonitoring(
 ) {
   const where = buildGrantReportingMonitoringWhere(filters, today);
   const metricWheres = buildGrantReportingMonitoringMetricWheres(filters, today);
-  const [total, attentionNeeded, dueSoon, overdue, draftInProgress, financialYearRows] = await Promise.all([
+  const activeWhere: Prisma.GrantReportingObligationWhereInput | null = filters.monitor === "all"
+    ? { AND: [monitoringBaseWhere(filters), activeObligationWhere()] }
+    : null;
+  // Keep each batch below the application's five-connection Prisma pool. The
+  // Reports page can otherwise queue all KPI counts while other route data is
+  // still using the pool, causing P2024 connection-acquisition timeouts.
+  const [total, attentionNeeded, dueSoon] = await Promise.all([
     client.grantReportingObligation.count({ where }),
     client.grantReportingObligation.count({ where: metricWheres.attentionNeeded }),
     client.grantReportingObligation.count({ where: metricWheres.dueSoon }),
+  ]);
+  const [overdue, draftInProgress, financialYearRows] = await Promise.all([
     client.grantReportingObligation.count({ where: metricWheres.overdue }),
     client.grantReportingObligation.count({ where: metricWheres.draftInProgress }),
     client.grantReportingObligation.findMany({
@@ -209,6 +217,9 @@ export async function getGrantReportingMonitoring(
       take: 100,
     }),
   ]);
+  const activeTotal = activeWhere
+    ? await client.grantReportingObligation.count({ where: activeWhere })
+    : 0;
   const totalPages = Math.max(1, Math.ceil(total / GRANT_REPORT_MONITOR_PAGE_SIZE));
   const page = Math.min(filters.page, totalPages);
   let records: GrantReportingMonitoringRecord[];
@@ -228,29 +239,30 @@ export async function getGrantReportingMonitoring(
     const byId = new Map(submittedRecords.map((record) => [record.id, record]));
     records = obligationIds.map((id) => byId.get(id)).filter((record): record is GrantReportingMonitoringRecord => Boolean(record));
   } else if (filters.monitor === "all") {
-    const activeWhere: Prisma.GrantReportingObligationWhereInput = { AND: [monitoringBaseWhere(filters), activeObligationWhere()] };
-    const activeTotal = await client.grantReportingObligation.count({ where: activeWhere });
+    const allActiveWhere = activeWhere ?? { id: { in: [] } };
     const offset = (page - 1) * GRANT_REPORT_MONITOR_PAGE_SIZE;
     const activeTake = Math.min(GRANT_REPORT_MONITOR_PAGE_SIZE, Math.max(0, activeTotal - offset));
-    const activeRecords = activeTake > 0 ? await client.grantReportingObligation.findMany({
-      where: activeWhere,
-      select: grantReportingMonitoringSelect,
-      orderBy: [{ dueAt: "asc" }, { createdAt: "asc" }],
-      skip: offset,
-      take: activeTake,
-    }) : [];
     const terminalSkip = Math.max(0, offset - activeTotal);
     const terminalTake = Math.min(
       GRANT_REPORT_MONITOR_PAGE_SIZE - activeTake,
       Math.max(0, total - activeTotal - terminalSkip),
     );
-    const terminalRecords = terminalTake > 0 ? await client.grantReportingObligation.findMany({
-      where: { AND: [monitoringBaseWhere(filters), { status: { in: [...GRANT_REPORT_TERMINAL_OBLIGATION_STATUSES] } }] },
-      select: grantReportingMonitoringSelect,
-      orderBy: [{ report: { updatedAt: "desc" } }, { dueAt: "desc" }, { createdAt: "desc" }],
-      skip: terminalSkip,
-      take: terminalTake,
-    }) : [];
+    const [activeRecords, terminalRecords] = await Promise.all([
+      activeTake > 0 ? client.grantReportingObligation.findMany({
+        where: allActiveWhere,
+        select: grantReportingMonitoringSelect,
+        orderBy: [{ dueAt: "asc" }, { createdAt: "asc" }],
+        skip: offset,
+        take: activeTake,
+      }) : Promise.resolve([]),
+      terminalTake > 0 ? client.grantReportingObligation.findMany({
+        where: { AND: [monitoringBaseWhere(filters), { status: { in: [...GRANT_REPORT_TERMINAL_OBLIGATION_STATUSES] } }] },
+        select: grantReportingMonitoringSelect,
+        orderBy: [{ report: { updatedAt: "desc" } }, { dueAt: "desc" }, { createdAt: "desc" }],
+        skip: terminalSkip,
+        take: terminalTake,
+      }) : Promise.resolve([]),
+    ]);
     records = [...activeRecords, ...terminalRecords];
   } else {
     records = await client.grantReportingObligation.findMany({
@@ -277,6 +289,15 @@ export async function getGrantReportingMonitoring(
       financialYears: financialYearRows.map((row) => row.financialYear).filter((value): value is string => Boolean(value)),
     },
   };
+}
+
+export async function getGrantReportingMonitoringCentres() {
+  return prisma.ecdCentre.findMany({
+    where: { archivedAt: null },
+    select: { id: true, centreName: true },
+    orderBy: { centreName: "asc" },
+    take: 500,
+  });
 }
 
 export type GrantReportingMonitoringData = Awaited<ReturnType<typeof getGrantReportingMonitoring>>;

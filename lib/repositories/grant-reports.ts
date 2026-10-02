@@ -65,11 +65,12 @@ export function buildGrantReportWhere(filters: GrantReportFiltersInput): Prisma.
   };
 }
 
-export async function getGrantReportWorkspace(filters: GrantReportFiltersInput = {}) {
+export type GrantReportWorkspaceScope = "reports" | "awards" | "obligations";
+
+export async function getGrantReportWorkspace(filters: GrantReportFiltersInput = {}, scope: GrantReportWorkspaceScope = "reports") {
   const reportWhere = buildGrantReportWhere(filters);
   const now = new Date();
-  const [reports, awards, obligations, centres, fundingOrganisations, donorOrganisations, projects, applications, commitments] = await Promise.all([
-    prisma.grantReport.findMany({
+  const loadReports = () => prisma.grantReport.findMany({
       where: reportWhere,
       include: {
         obligation: true,
@@ -77,8 +78,8 @@ export async function getGrantReportWorkspace(filters: GrantReportFiltersInput =
       },
       orderBy: [{ obligation: { dueAt: "asc" } }, { updatedAt: "desc" }],
       take: 200,
-    }),
-    prisma.grantAward.findMany({
+    });
+  const loadAwards = () => prisma.grantAward.findMany({
       include: {
         centre: { select: { id: true, centreName: true } },
         fundingProject: { select: { id: true, title: true } },
@@ -89,17 +90,17 @@ export async function getGrantReportWorkspace(filters: GrantReportFiltersInput =
       },
       orderBy: [{ createdAt: "desc" }],
       take: 200,
-    }),
-    prisma.grantReportingObligation.findMany({
+    });
+  const loadObligations = () => prisma.grantReportingObligation.findMany({
       include: { award: { include: { centre: { select: { centreName: true } }, organisations: partyInclude } }, tranche: { select: { id: true, trancheNumber: true, title: true } }, report: { select: { id: true, status: true, currentVersionNumber: true } } },
       orderBy: [{ dueAt: "asc" }],
       take: 200,
-    }),
-    prisma.ecdCentre.findMany({ where: { archivedAt: null }, select: { id: true, centreName: true }, orderBy: { centreName: "asc" }, take: 500 }),
-    prisma.fundingOrganisation.findMany({ where: { status: "Active" }, select: { id: true, name: true }, orderBy: { name: "asc" }, take: 200 }),
-    prisma.donorOrganisation.findMany({ where: { archivedAt: null }, select: { id: true, name: true, organisationName: true }, orderBy: { name: "asc" }, take: 200 }),
-    prisma.fundingProject.findMany({ select: { id: true, title: true, requestedAmount: true, profile: { select: { centreId: true, centre: { select: { centreName: true } } } } }, orderBy: { title: "asc" }, take: 500 }),
-    prisma.fundingApplication.findMany({
+    });
+  const loadCentres = () => prisma.ecdCentre.findMany({ where: { archivedAt: null }, select: { id: true, centreName: true }, orderBy: { centreName: "asc" }, take: 500 });
+  const loadFundingOrganisations = () => prisma.fundingOrganisation.findMany({ where: { status: "Active" }, select: { id: true, name: true }, orderBy: { name: "asc" }, take: 200 });
+  const loadDonorOrganisations = () => prisma.donorOrganisation.findMany({ where: { archivedAt: null }, select: { id: true, name: true, organisationName: true }, orderBy: { name: "asc" }, take: 200 });
+  const loadProjects = () => prisma.fundingProject.findMany({ select: { id: true, title: true, requestedAmount: true, profile: { select: { centreId: true, centre: { select: { centreName: true } } } } }, orderBy: { title: "asc" }, take: 500 });
+  const loadApplications = () => prisma.fundingApplication.findMany({
       where: { status: "APPROVED", grantAward: null },
       select: {
         id: true,
@@ -117,9 +118,33 @@ export async function getGrantReportWorkspace(filters: GrantReportFiltersInput =
       },
       orderBy: { decidedAt: "desc" },
       take: 200,
-    }),
-    prisma.sponsorshipCommitment.findMany({ where: { commitmentStatus: { in: ["Confirmed", "Partially Fulfilled", "Fulfilled"] }, grantAward: null }, select: { id: true, referenceNumber: true, committedAmount: true, donorOrganisationId: true, centreId: true, commitmentStatus: true, centre: { select: { centreName: true } }, donor: { select: { name: true, organisationName: true } }, project: { select: { fundingProjectId: true, title: true, fundingProject: { select: { title: true } } } } }, orderBy: { updatedAt: "desc" }, take: 200 }),
-  ]);
+    });
+  const loadCommitments = () => prisma.sponsorshipCommitment.findMany({ where: { commitmentStatus: { in: ["Confirmed", "Partially Fulfilled", "Fulfilled"] }, grantAward: null }, select: { id: true, referenceNumber: true, committedAmount: true, donorOrganisationId: true, centreId: true, commitmentStatus: true, centre: { select: { centreName: true } }, donor: { select: { name: true, organisationName: true } }, project: { select: { fundingProjectId: true, title: true, fundingProject: { select: { title: true } } } } }, orderBy: { updatedAt: "desc" }, take: 200 });
+
+  let reports: Awaited<ReturnType<typeof loadReports>> = [];
+  let awards: Awaited<ReturnType<typeof loadAwards>> = [];
+  let obligations: Awaited<ReturnType<typeof loadObligations>> = [];
+  let centres: Awaited<ReturnType<typeof loadCentres>> = [];
+  let fundingOrganisations: Awaited<ReturnType<typeof loadFundingOrganisations>> = [];
+  let donorOrganisations: Awaited<ReturnType<typeof loadDonorOrganisations>> = [];
+  let projects: Awaited<ReturnType<typeof loadProjects>> = [];
+  let applications: Awaited<ReturnType<typeof loadApplications>> = [];
+  let commitments: Awaited<ReturnType<typeof loadCommitments>> = [];
+
+  if (scope === "reports") {
+    [reports, centres, fundingOrganisations, donorOrganisations] = await Promise.all([
+      loadReports(), loadCentres(), loadFundingOrganisations(), loadDonorOrganisations(),
+    ]);
+  } else if (scope === "awards") {
+    [awards, centres, fundingOrganisations, donorOrganisations] = await Promise.all([
+      loadAwards(), loadCentres(), loadFundingOrganisations(), loadDonorOrganisations(),
+    ]);
+    [projects, applications, commitments] = await Promise.all([
+      loadProjects(), loadApplications(), loadCommitments(),
+    ]);
+  } else {
+    [awards, obligations] = await Promise.all([loadAwards(), loadObligations()]);
+  }
 
   return {
     reports: reports.map((report) => ({

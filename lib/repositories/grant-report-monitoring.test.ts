@@ -159,10 +159,31 @@ test("submitted monitoring paginates by persisted submission time and restores t
   assert.deepEqual((obligationQueries.at(-1)?.where as { id: { in: string[] } }).id.in, ["obligation-new", "obligation-old"]);
 });
 
+test("monitoring limits concurrent Prisma operations below the five-connection pool", async () => {
+  let active = 0;
+  let maximum = 0;
+  const operation = async <T>(value: T) => {
+    active += 1;
+    maximum = Math.max(maximum, active);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    active -= 1;
+    return value;
+  };
+  const client = {
+    grantReportingObligation: {
+      count: async () => operation(0),
+      findMany: async (args: Record<string, unknown>) => operation("distinct" in args ? [] : []),
+    },
+    grantReportVersion: { findMany: async () => operation([]) },
+  };
+
+  await getGrantReportingMonitoring(baseFilters, client as never, new Date("2026-09-29"));
+  assert.equal(maximum, 3);
+});
+
 test("reports page authorizes before loading either reporting repository", () => {
   const page = readFileSync(new URL("../../app/dashboard/super-admin/reports/page.tsx", import.meta.url), "utf8");
   const authorization = page.indexOf("await requireSuperAdmin()");
   assert.ok(authorization >= 0);
-  assert.ok(authorization < page.indexOf("getGrantReportWorkspace(validatedFilters)"));
-  assert.ok(authorization < page.indexOf("getGrantReportingMonitoring(validatedMonitoringFilters)"));
+  assert.ok(authorization < page.indexOf("loadGrantReportsDashboard(activeTab"));
 });
