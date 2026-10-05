@@ -35,6 +35,19 @@ export const grantReportingMonitoringFiltersSchema = z.object({
 
 export type GrantReportingMonitoringFiltersInput = z.infer<typeof grantReportingMonitoringFiltersSchema>;
 
+export const grantReportingCalendarFiltersSchema = z.object({
+  query: z.string().trim().max(100).optional(),
+  centreId: optionalId,
+  awardId: optionalId,
+  type: z.enum(["INTERIM", "FINAL", "QUARTERLY_EXPENDITURE", "QUARTERLY_CASH_FLOW", "CUSTOM"]).optional(),
+  state: z.enum(["all", "overdue", "due_soon", "upcoming", "submitted"]).default("all"),
+  financialYear: z.string().trim().regex(/^\d{4}$/).optional(),
+  quarter: z.preprocess((value) => value === "" || value === undefined ? undefined : value, z.coerce.number().int().min(1).max(4).optional()),
+  page: z.coerce.number().int().min(1).default(1),
+});
+
+export type GrantReportingCalendarFiltersInput = z.infer<typeof grantReportingCalendarFiltersSchema>;
+
 export const createGrantAwardSchema = z.object({
   sourceType: z.enum(["FUNDING_APPLICATION", "SPONSORSHIP_COMMITMENT", "MANUAL"]),
   fundingApplicationId: optionalId,

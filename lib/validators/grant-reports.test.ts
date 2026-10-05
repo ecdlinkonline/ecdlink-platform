@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createGrantAwardSchema, createGrantReportingObligationSchema, grantReportingMonitoringFiltersSchema, saveGrantReportBeneficiariesSchema, saveGrantReportCertificationsSchema, saveGrantReportFinancialSchema, saveQuarterlyBankReconciliationSchema, saveQuarterlyCashFlowExpensesSchema, saveQuarterlyCashFlowGeneralSchema, saveQuarterlyCashReceivedSchema, saveQuarterlyExpenditureGeneralSchema, saveQuarterlyExpenditureSchema, saveQuarterlyIncomeSchema } from "./grant-reports";
+import { createGrantAwardSchema, createGrantReportingObligationSchema, grantReportingCalendarFiltersSchema, grantReportingMonitoringFiltersSchema, saveGrantReportBeneficiariesSchema, saveGrantReportCertificationsSchema, saveGrantReportFinancialSchema, saveQuarterlyBankReconciliationSchema, saveQuarterlyCashFlowExpensesSchema, saveQuarterlyCashFlowGeneralSchema, saveQuarterlyCashReceivedSchema, saveQuarterlyExpenditureGeneralSchema, saveQuarterlyExpenditureSchema, saveQuarterlyIncomeSchema } from "./grant-reports";
 import { grantBankCategorisationActionSchema } from "./grant-bank-imports";
 
 const award = {
@@ -16,6 +16,16 @@ test("monitoring filters validate views, pagination and combined reporting dimen
   assert.equal(grantReportingMonitoringFiltersSchema.safeParse({ monitor: "unknown" }).success, false);
   assert.equal(grantReportingMonitoringFiltersSchema.safeParse({ quarter: 5 }).success, false);
   assert.equal(grantReportingMonitoringFiltersSchema.safeParse({ page: 0 }).success, false);
+});
+
+test("calendar filters validate navigation, operational state and bounded pagination", () => {
+  assert.deepEqual(grantReportingCalendarFiltersSchema.parse({}), { state: "all", page: 1 });
+  assert.deepEqual(grantReportingCalendarFiltersSchema.parse({ query: " Future ", centreId: "centre-1", awardId: "award-1", type: "QUARTERLY_CASH_FLOW", state: "due_soon", financialYear: "2026", quarter: "3", page: "2" }), {
+    query: "Future", centreId: "centre-1", awardId: "award-1", type: "QUARTERLY_CASH_FLOW", state: "due_soon", financialYear: "2026", quarter: 3, page: 2,
+  });
+  assert.equal(grantReportingCalendarFiltersSchema.safeParse({ state: "planned" }).success, false);
+  assert.equal(grantReportingCalendarFiltersSchema.safeParse({ financialYear: "26" }).success, false);
+  assert.equal(grantReportingCalendarFiltersSchema.safeParse({ quarter: 5 }).success, false);
 });
 
 test("manual awards require exactly one explicit organisation and no source record", () => {

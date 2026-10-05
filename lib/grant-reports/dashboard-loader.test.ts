@@ -4,7 +4,9 @@ import { loadGrantReportsDashboard, resolveGrantReportsTab, type GrantReportsTab
 
 const filters = {};
 const monitoringFilters = { monitor: "all" as const, page: 1 };
+const calendarFilters = { state: "all" as const, page: 1 };
 const monitoring = { metrics: {}, rows: [], pagination: {}, options: {} };
+const calendar = { period: {}, rows: [], pagination: {}, options: {} };
 const workspace = { reports: [], awards: [], obligations: [], options: {} };
 const centres = [{ id: "centre-1", centreName: "Future Leaders" }];
 
@@ -12,6 +14,7 @@ function dependencies(calls: string[]) {
   return {
     loadMonitoring: async () => { calls.push("monitoring"); return monitoring as never; },
     loadMonitoringCentres: async () => { calls.push("monitoring-centres"); return centres; },
+    loadCalendar: async () => { calls.push("calendar"); return calendar as never; },
     loadWorkspace: async (_filters: unknown, scope: string) => { calls.push(`workspace:${scope}`); return workspace as never; },
   };
 }
@@ -20,17 +23,27 @@ test("Monitoring is the default and loads no legacy workspace datasets", async (
   assert.equal(resolveGrantReportsTab(undefined), "monitoring");
   assert.equal(resolveGrantReportsTab("unknown"), "monitoring");
   const calls: string[] = [];
-  const result = await loadGrantReportsDashboard("monitoring", filters, monitoringFilters, dependencies(calls));
+  const result = await loadGrantReportsDashboard("monitoring", filters, monitoringFilters, calendarFilters, dependencies(calls));
   assert.deepEqual(calls, ["monitoring", "monitoring-centres"]);
   assert.equal(result.workspace, null);
   assert.equal(result.monitoring, monitoring);
   assert.deepEqual(result.monitoringCentres, centres);
 });
 
+test("Calendar loads only its dedicated persisted-obligation repository", async () => {
+  assert.equal(resolveGrantReportsTab("calendar"), "calendar");
+  const calls: string[] = [];
+  const result = await loadGrantReportsDashboard("calendar", filters, monitoringFilters, calendarFilters, dependencies(calls));
+  assert.deepEqual(calls, ["calendar"]);
+  assert.equal(result.calendar, calendar);
+  assert.equal(result.workspace, null);
+  assert.equal(result.monitoring, null);
+});
+
 test("each legacy tab loads only its corresponding workspace scope", async () => {
   for (const tab of ["reports", "awards", "obligations"] satisfies GrantReportsTab[]) {
     const calls: string[] = [];
-    const result = await loadGrantReportsDashboard(tab, filters, monitoringFilters, dependencies(calls));
+    const result = await loadGrantReportsDashboard(tab, filters, monitoringFilters, calendarFilters, dependencies(calls));
     assert.deepEqual(calls, [`workspace:${tab}`]);
     assert.equal(result.workspace, workspace);
     assert.equal(result.monitoring, null);

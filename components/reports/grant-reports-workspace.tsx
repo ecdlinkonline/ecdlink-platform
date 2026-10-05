@@ -8,15 +8,17 @@ import { DataTable, PageHeader, StatusBadge } from "@/components/design-system";
 import { GrantAwardDialog } from "@/components/reports/grant-award-dialog";
 import { GrantObligationDialog } from "@/components/reports/grant-obligation-dialog";
 import { GrantReportingMonitoring } from "@/components/reports/grant-reporting-monitoring";
+import { GrantReportingCalendar } from "@/components/reports/grant-reporting-calendar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatGrantCurrency, formatGrantLabel, reportTypeLabels } from "@/lib/grant-reports/types";
 import { grantReportEmptyStateMessage } from "@/lib/grant-reports/presentation";
 import type { GrantReportWorkspaceData } from "@/lib/grant-reports/types";
 import type { GrantReportingMonitoringData } from "@/lib/repositories/grant-report-monitoring";
-import type { GrantReportFiltersInput, GrantReportingMonitoringFiltersInput } from "@/lib/validators/grant-reports";
+import type { GrantReportingCalendarData } from "@/lib/repositories/grant-report-calendar";
+import type { GrantReportFiltersInput, GrantReportingCalendarFiltersInput, GrantReportingMonitoringFiltersInput } from "@/lib/validators/grant-reports";
 
-const tabs = [{ id: "monitoring", label: "Monitoring" }, { id: "reports", label: "Reports" }, { id: "awards", label: "Grant Awards" }, { id: "obligations", label: "Reporting Obligations" }] as const;
+const tabs = [{ id: "monitoring", label: "Monitoring" }, { id: "calendar", label: "Calendar" }, { id: "reports", label: "Reports" }, { id: "awards", label: "Grant Awards" }, { id: "obligations", label: "Reporting Obligations" }] as const;
 type TabId = typeof tabs[number]["id"];
 
 
@@ -24,7 +26,7 @@ function dateLabel(value: string | null) {
   return value ? new Intl.DateTimeFormat("en-ZA", { dateStyle: "medium" }).format(new Date(value)) : "—";
 }
 
-export function GrantReportsWorkspace({ data, monitoring, monitoringCentres, initialTab, filters, monitoringFilters }: { data: GrantReportWorkspaceData | null; monitoring: GrantReportingMonitoringData | null; monitoringCentres: GrantReportWorkspaceData["options"]["centres"]; initialTab?: string; filters: GrantReportFiltersInput; monitoringFilters: GrantReportingMonitoringFiltersInput }) {
+export function GrantReportsWorkspace({ data, monitoring, monitoringCentres, calendar, initialTab, filters, monitoringFilters, calendarFilters }: { data: GrantReportWorkspaceData | null; monitoring: GrantReportingMonitoringData | null; monitoringCentres: GrantReportWorkspaceData["options"]["centres"]; calendar: GrantReportingCalendarData | null; initialTab?: string; filters: GrantReportFiltersInput; monitoringFilters: GrantReportingMonitoringFiltersInput; calendarFilters: GrantReportingCalendarFiltersInput }) {
   const router = useRouter();
   const activeTab: TabId = tabs.some((tab) => tab.id === initialTab) ? initialTab as TabId : "monitoring";
   const refresh = () => router.refresh();
@@ -37,6 +39,7 @@ export function GrantReportsWorkspace({ data, monitoring, monitoringCentres, ini
     <PageHeader eyebrow="Super Admin" title="Grant Reports" description="Oversee confirmed grant awards, reporting obligations and formal report lifecycles across ECDLink." actions={<>{activeTab === "awards" && data ? <GrantAwardDialog data={data} onSuccess={refresh} /> : <Link href="?tab=awards"><Button>Create Grant Award</Button></Link>}{activeTab === "obligations" && data ? <GrantObligationDialog data={data} onSuccess={refresh} /> : <Link href="?tab=obligations"><Button variant="secondary">Add Obligation</Button></Link>}<Link href="/dashboard/super-admin"><Button variant="secondary">Back to dashboard</Button></Link></>} />
     <div className="flex gap-2 overflow-x-auto rounded-lg border border-brand-line bg-white p-2 dark:border-slate-800 dark:bg-slate-900">{tabs.map((tab) => <Link key={tab.id} href={`?tab=${tab.id}`} className={`shrink-0 rounded-lg px-4 py-2 text-sm font-bold ${activeTab === tab.id ? "bg-brand-navy text-white" : "text-slate-600 hover:bg-brand-accent dark:text-slate-300"}`}>{tab.label}</Link>)}</div>
     {activeTab === "monitoring" && monitoring ? <GrantReportingMonitoring data={monitoring} filters={monitoringFilters} centres={monitoringCentres} /> : null}
+    {activeTab === "calendar" && calendar ? <GrantReportingCalendar data={calendar} filters={calendarFilters} /> : null}
     {activeTab === "reports" && data ? <ReportsSection data={data} filters={filters} organisations={organisationOptions} /> : null}
     {activeTab === "awards" && data ? <AwardsSection data={data} /> : null}
     {activeTab === "obligations" && data ? <ObligationsSection data={data} /> : null}
