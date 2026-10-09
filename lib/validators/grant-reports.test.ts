@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createGrantAwardSchema, createGrantReportingObligationSchema, grantReportingCalendarFiltersSchema, grantReportingMonitoringFiltersSchema, saveGrantReportBeneficiariesSchema, saveGrantReportCertificationsSchema, saveGrantReportFinancialSchema, saveQuarterlyBankReconciliationSchema, saveQuarterlyCashFlowExpensesSchema, saveQuarterlyCashFlowGeneralSchema, saveQuarterlyCashReceivedSchema, saveQuarterlyExpenditureGeneralSchema, saveQuarterlyExpenditureSchema, saveQuarterlyIncomeSchema } from "./grant-reports";
+import { createGrantAwardSchema, createGrantReportingObligationSchema, grantReportEvidenceListSchema, grantReportingCalendarFiltersSchema, grantReportingMonitoringFiltersSchema, saveGrantReportBeneficiariesSchema, saveGrantReportCertificationsSchema, saveGrantReportFinancialSchema, saveQuarterlyBankReconciliationSchema, saveQuarterlyCashFlowExpensesSchema, saveQuarterlyCashFlowGeneralSchema, saveQuarterlyCashReceivedSchema, saveQuarterlyExpenditureGeneralSchema, saveQuarterlyExpenditureSchema, saveQuarterlyIncomeSchema, uploadGrantReportDocumentSchema } from "./grant-reports";
 import { grantBankCategorisationActionSchema } from "./grant-bank-imports";
 
 const award = {
@@ -130,4 +130,20 @@ test("bank categorisation actions accept only controlled categories and action s
   assert.equal(grantBankCategorisationActionSchema.safeParse({ action: "confirm", transactionId: "clz1234567890abcdefghijk", category: "Bank Charges" }).success, true);
   assert.equal(grantBankCategorisationActionSchema.safeParse({ action: "confirm", transactionId: "clz1234567890abcdefghijk", category: "Invented Category" }).success, false);
   assert.equal(grantBankCategorisationActionSchema.safeParse({ action: "confirm", transactionId: "not-an-id", category: "Transport" }).success, false);
+});
+
+test("grant report evidence list validation is bounded and requires a version", () => {
+  assert.deepEqual(grantReportEvidenceListSchema.parse({ versionNumber: "2" }), { versionNumber: 2, page: 1, pageSize: 20 });
+  assert.equal(grantReportEvidenceListSchema.safeParse({ versionNumber: 0 }).success, false);
+  assert.equal(grantReportEvidenceListSchema.safeParse({ versionNumber: 1, page: 0 }).success, false);
+  assert.equal(grantReportEvidenceListSchema.safeParse({ versionNumber: 1, pageSize: 51 }).success, false);
+});
+
+test("grant report evidence permits one same-version linkage context only", () => {
+  const base = { documentType: "INVOICE", title: "April invoice" };
+  assert.equal(uploadGrantReportDocumentSchema.safeParse(base).success, true);
+  assert.equal(uploadGrantReportDocumentSchema.safeParse({ ...base, financialLineId: "line-1" }).success, true);
+  assert.equal(uploadGrantReportDocumentSchema.safeParse({ ...base, indicatorId: "indicator-1" }).success, true);
+  assert.equal(uploadGrantReportDocumentSchema.safeParse({ ...base, indicatorId: "indicator-1", financialLineId: "line-1" }).success, false);
+  assert.equal(uploadGrantReportDocumentSchema.safeParse({ ...base, documentType: "UNKNOWN" }).success, false);
 });

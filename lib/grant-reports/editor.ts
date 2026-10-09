@@ -15,6 +15,7 @@ export const dbeQuarterlyExpenditureSections = [
   { id: "quarterly_income", label: "Income" },
   { id: "quarterly_expenditure", label: "Expenditure" },
   { id: "bank_reconciliation", label: "Bank Reconciliation" },
+  { id: "documents", label: "Evidence & Supporting Documents" },
   { id: "certification", label: "Certification & Review" },
 ] as const;
 
@@ -26,6 +27,7 @@ export const dbeQuarterlyCashFlowSections = [
   { id: "operating_expenses", label: "Operating Expenses" },
   { id: "variance_review", label: "Variance & Reasons" },
   { id: "financial_reconciliation", label: "Financial Reconciliation" },
+  { id: "documents", label: "Evidence & Supporting Documents" },
   { id: "submission_readiness", label: "Submission Readiness" },
   { id: "certification", label: "Certification & Review" },
 ] as const;

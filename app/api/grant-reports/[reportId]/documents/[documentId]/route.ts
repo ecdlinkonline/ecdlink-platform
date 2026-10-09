@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { apiError, statusFromError } from "@/lib/api/responses";
 import { requireReportAdmin } from "@/lib/api/report-auth";
-import { getGrantReportDocumentDownload, getGrantReportDocumentPreview } from "@/lib/services/grant-report-documents";
+import { requireTrustedOrigin } from "@/lib/api/security";
+import { getGrantReportDocumentDownload, getGrantReportDocumentPreview, removeGrantReportDocument } from "@/lib/services/grant-report-documents";
 
 export async function GET(request: Request, { params }: { params: Promise<{ reportId: string; documentId: string }> }) {
   const context = await requireReportAdmin();
@@ -18,5 +19,18 @@ export async function GET(request: Request, { params }: { params: Promise<{ repo
     return NextResponse.redirect(access.url, 302);
   } catch (error) {
     return apiError("The report document could not be accessed.", error instanceof Error ? statusFromError(error, 500) : 500);
+  }
+}
+
+export async function DELETE(request: Request, { params }: { params: Promise<{ reportId: string; documentId: string }> }) {
+  const context = await requireReportAdmin();
+  if ("error" in context) return context.error;
+  const originError = requireTrustedOrigin(request);
+  if (originError) return originError;
+  try {
+    const { reportId, documentId } = await params;
+    return Response.json({ ok: true, data: await removeGrantReportDocument({ reportId, documentId, actorUserId: context.internalUser.id }) });
+  } catch (error) {
+    return apiError("The report document could not be removed.", error instanceof Error ? statusFromError(error, 500) : 500);
   }
 }

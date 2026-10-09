@@ -475,7 +475,8 @@ export async function getGrantReportEditor(reportId: string, client: Prisma.Tran
       certifications: { include: { confirmedBy: { select: { firstName: true, lastName: true, email: true } } }, orderBy: [{ displayOrder: "asc" }, { createdAt: "asc" }] },
       submittedBy: { select: { firstName: true, lastName: true, email: true } },
       reviews: { select: { id: true } },
-      documents: { include: { file: { select: { originalFilename: true, mimeType: true, fileSize: true, createdAt: true } }, indicator: { select: { id: true, objective: true } }, uploadedBy: { select: { firstName: true, lastName: true, email: true } } }, orderBy: { uploadedAt: "desc" } },
+      documents: { where: { documentType: "AUDITED_FINANCIAL_STATEMENTS" }, select: { id: true }, take: 1 },
+      _count: { select: { documents: true } },
     },
   });
   if (!version || (submittedVersionNumber !== undefined && !version.submittedAt)) return null;
@@ -558,19 +559,7 @@ export async function getGrantReportEditor(reportId: string, client: Prisma.Tran
     imports: reconciliationImports,
   }) : null;
 
-  const documents = version.documents.map((document) => ({
-    id: document.id,
-    documentType: document.documentType,
-    title: document.title,
-    description: document.description,
-    indicatorId: document.indicatorId,
-    indicator: document.indicator?.objective ?? null,
-    originalFilename: document.file.originalFilename,
-    mimeType: document.file.mimeType,
-    fileSize: document.file.fileSize,
-    uploadedAt: document.uploadedAt.toISOString(),
-    uploadedBy: [document.uploadedBy.firstName, document.uploadedBy.lastName].filter(Boolean).join(" ") || document.uploadedBy.email || "Internal user",
-  }));
+  const hasAuditedFinancialStatements = version.documents.length > 0;
   const completion = version.reportType === "QUARTERLY_EXPENDITURE" ? quarterlyExpenditureCompletion({
     financialYear: version.financialYear,
     quarter: version.quarter,
@@ -604,7 +593,7 @@ export async function getGrantReportEditor(reportId: string, client: Prisma.Tran
     financialLineCount: version.financialLines.length,
     certificationCount: version.certifications.length,
     confirmedCertificationCount: version.certifications.filter((item) => item.digitallyConfirmed).length,
-    hasAuditedFinancialStatements: documents.some((document) => document.documentType === "AUDITED_FINANCIAL_STATEMENTS"),
+    hasAuditedFinancialStatements,
   });
 
   const submissionReadiness = version.reportType === "QUARTERLY_CASH_FLOW" ? buildQuarterlySubmissionReadiness({
@@ -626,7 +615,7 @@ export async function getGrantReportEditor(reportId: string, client: Prisma.Tran
       })),
       cashReceivedLineCount: incomeLines.length, operatingExpenseLineCount: expenditureLines.length,
       unresolvedVarianceCount: expenditureLines.filter((row) => row.variance && !row.variance.isZero() && !row.reasonForVariance?.trim()).length,
-      documentCount: version.documents.length, reviewCount: version.reviews.length,
+      documentCount: version._count.documents, reviewCount: version.reviews.length,
     },
     financialReconciliation, bankImports: reconciliationImports,
   }) : null;
@@ -707,8 +696,11 @@ export async function getGrantReportEditor(reportId: string, client: Prisma.Tran
       financialReconciliation,
       submissionReadiness,
     },
-    documents,
+    evidenceLinks: {
+      indicators: version.indicators.map((row) => ({ id: row.id, label: row.objective })),
+      financialLines: version.financialLines.map((row) => ({ id: row.id, lineType: row.lineType, label: row.categoryName })),
+    },
     certifications: version.certifications.map((row) => ({ id: row.id, party: row.party, nameSnapshot: row.nameSnapshot, designationSnapshot: row.designationSnapshot, certificationDate: dateValue(row.certificationDate), digitallyConfirmed: row.digitallyConfirmed, confirmedAt: dateValue(row.confirmedAt), confirmedBy: row.confirmedBy ? [row.confirmedBy.firstName, row.confirmedBy.lastName].filter(Boolean).join(" ") || row.confirmedBy.email || "Internal user" : null })),
-    requirements: { auditedFinancialStatementsRequired: version.reportType === "FINAL", sectorUnavailable: true, approvedBudgetSourceUnavailable: true },
+    requirements: { auditedFinancialStatementsRequired: version.reportType === "FINAL", hasAuditedFinancialStatements, sectorUnavailable: true, approvedBudgetSourceUnavailable: true },
   };
 }

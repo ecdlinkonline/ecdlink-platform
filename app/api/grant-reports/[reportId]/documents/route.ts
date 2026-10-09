@@ -3,10 +3,28 @@ import { apiError, apiSuccess, statusFromError, validationError } from "@/lib/ap
 import { requireReportAdmin } from "@/lib/api/report-auth";
 import { enforceRateLimit, requireTrustedOrigin } from "@/lib/api/security";
 import { validateUploadRequest } from "@/lib/security/upload-request";
-import { uploadGrantReportDocument } from "@/lib/services/grant-report-documents";
+import { getGrantReportEvidenceList, uploadGrantReportDocument } from "@/lib/services/grant-report-documents";
 import { GrantReportingServiceError } from "@/lib/services/grant-reports";
 import { StorageError } from "@/lib/storage/errors";
-import { uploadGrantReportDocumentSchema } from "@/lib/validators/grant-reports";
+import { grantReportEvidenceListSchema, uploadGrantReportDocumentSchema } from "@/lib/validators/grant-reports";
+
+export async function GET(request: Request, { params }: { params: Promise<{ reportId: string }> }) {
+  const context = await requireReportAdmin();
+  if ("error" in context) return context.error;
+  try {
+    const search = new URL(request.url).searchParams;
+    const query = grantReportEvidenceListSchema.parse({
+      versionNumber: search.get("versionNumber"),
+      page: search.get("page") ?? undefined,
+      pageSize: search.get("pageSize") ?? undefined,
+    });
+    return apiSuccess(await getGrantReportEvidenceList({ reportId: (await params).reportId, ...query }));
+  } catch (error) {
+    if (error instanceof ZodError) return validationError(error);
+    if (error instanceof GrantReportingServiceError) return apiError(error.message, error.status);
+    return apiError("Report evidence could not be loaded.", 500);
+  }
+}
 
 export async function POST(request: Request, { params }: { params: Promise<{ reportId: string }> }) {
   const context = await requireReportAdmin();
@@ -26,6 +44,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ rep
       title: formData.get("title"),
       description: formData.get("description") || undefined,
       indicatorId: formData.get("indicatorId") || undefined,
+      financialLineId: formData.get("financialLineId") || undefined,
     });
     return apiSuccess(await uploadGrantReportDocument({ reportId: (await params).reportId, actorUserId: context.internalUser.id, file, metadata }), 201);
   } catch (error) {

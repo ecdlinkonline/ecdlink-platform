@@ -382,11 +382,22 @@ export const saveGrantReportSectionSchema = z.discriminatedUnion("section", [
   saveGrantReportCertificationsSchema,
 ]);
 
+export const grantReportEvidenceListSchema = z.object({
+  versionNumber: z.coerce.number().int().min(1),
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(50).default(20),
+});
+
 export const uploadGrantReportDocumentSchema = z.object({
   documentType: z.enum(["INVOICE", "BANK_STATEMENT", "PROOF_OF_PAYMENT", "RECEIPT", "PROCUREMENT_EVIDENCE", "INDICATOR_EVIDENCE", "BENEFICIARY_EVIDENCE", "SIGNED_REPORT", "AUDITED_FINANCIAL_STATEMENTS", "OTHER"]),
   title: z.string().trim().min(1).max(200),
   description: z.string().trim().max(2_000).optional(),
   indicatorId: optionalId,
+  financialLineId: optionalId,
+}).superRefine((input, context) => {
+  if (input.indicatorId && input.financialLineId) {
+    context.addIssue({ code: "custom", path: ["financialLineId"], message: "Link evidence to either an indicator or a financial line, not both." });
+  }
 });
 
 export const submitGrantReportSchema = z.object({
@@ -398,4 +409,5 @@ export type CreateGrantReportingObligationInput = z.infer<typeof createGrantRepo
 export type GrantReportFiltersInput = z.infer<typeof grantReportFiltersSchema>;
 export type SaveGrantReportSectionInput = z.infer<typeof saveGrantReportSectionSchema>;
 export type UploadGrantReportDocumentInput = z.infer<typeof uploadGrantReportDocumentSchema>;
+export type GrantReportEvidenceListInput = z.infer<typeof grantReportEvidenceListSchema>;
 export type SubmitGrantReportInput = z.infer<typeof submitGrantReportSchema>;
