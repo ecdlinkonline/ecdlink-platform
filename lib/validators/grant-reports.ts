@@ -48,6 +48,14 @@ export const grantReportingCalendarFiltersSchema = z.object({
 
 export type GrantReportingCalendarFiltersInput = z.infer<typeof grantReportingCalendarFiltersSchema>;
 
+export const grantReportingAnnualCoverageFiltersSchema = z.object({
+  awardId: optionalId,
+  financialYear: z.string().trim().regex(/^\d{4}$/).optional(),
+  reportType: z.enum(["QUARTERLY_EXPENDITURE", "QUARTERLY_CASH_FLOW"]).default("QUARTERLY_CASH_FLOW"),
+});
+
+export type GrantReportingAnnualCoverageFiltersInput = z.infer<typeof grantReportingAnnualCoverageFiltersSchema>;
+
 export const createGrantAwardSchema = z.object({
   sourceType: z.enum(["FUNDING_APPLICATION", "SPONSORSHIP_COMMITMENT", "MANUAL"]),
   fundingApplicationId: optionalId,
