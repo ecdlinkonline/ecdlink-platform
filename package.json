@@ -23,17 +23,19 @@
     "test:production-health": "tsx --conditions=react-server --test lib/config/production.test.ts lib/health/readiness.test.ts app/api/health/health.test.ts",
     "test:production-security": "tsx --conditions=react-server --test lib/security/content-security-policy.test.ts lib/security/route-access.test.ts lib/security/trusted-origin.test.ts lib/security/upload-request.test.ts lib/security/fallback-auth.test.ts lib/rate-limit/service.test.ts lib/rate-limit/upstash-provider.test.ts lib/auth/authorization.test.ts lib/auth/onboarding.test.ts app/api/centres/centre-route.test.ts",
     "test:super-admin-search": "tsx --conditions=react-server --test lib/search/super-admin-search.test.ts lib/search/latest-search-request.test.ts lib/repositories/super-admin-search.test.ts app/api/super-admin/search/route.test.ts",
-    "test:grant-reports": "tsx --conditions=react-server --test lib/validators/grant-reports.test.ts lib/repositories/grant-reports.test.ts lib/repositories/grant-report-documents.test.ts lib/repositories/grant-report-monitoring.test.ts lib/repositories/grant-report-calendar.test.ts lib/repositories/grant-report-annual-coverage.test.ts lib/services/grant-reports.test.ts lib/services/grant-report-lifecycle.test.ts lib/services/grant-report-documents.test.ts lib/grant-reports/dashboard-loader.test.ts lib/grant-reports/calendar.test.ts lib/grant-reports/annual-coverage.test.ts lib/grant-reports/financial-qa.test.ts lib/grant-reports/editor.test.ts lib/grant-reports/report-editor-route.test.ts lib/grant-reports/report-evidence-route.test.ts lib/grant-reports/presentation.test.ts lib/grant-reports/award-form.test.ts lib/grant-reports/obligation-form.test.ts lib/grant-reports/quarterly-period.test.ts lib/grant-reports/lifecycle.test.ts lib/grant-reports/agreement.test.ts lib/grant-reports/create-award-flow.test.ts lib/grant-reports/bank-import.test.ts lib/grant-reports/bank-statement-extraction.test.ts lib/grant-reports/bank-transaction-categorisation.test.ts lib/grant-reports/bank-transaction-posting.test.ts lib/grant-reports/financial-reconciliation.test.ts lib/grant-reports/submission-readiness.test.ts components/reports/grant-report-evidence.test.ts components/workflows/workflow-action-dialog.test.ts app/api/reports/route.test.ts app/api/grant-awards/route.test.ts app/api/grant-awards/agreements/stage/route.test.ts",
+    "test:grant-reports": "tsx --conditions=react-server --test lib/grant-report-export/export.test.ts lib/grant-report-export/repository.test.ts lib/grant-report-export/service.test.ts lib/validators/grant-reports.test.ts lib/repositories/grant-reports.test.ts lib/repositories/grant-report-documents.test.ts lib/repositories/grant-report-monitoring.test.ts lib/repositories/grant-report-calendar.test.ts lib/repositories/grant-report-annual-coverage.test.ts lib/services/grant-reports.test.ts lib/services/grant-report-lifecycle.test.ts lib/services/grant-report-documents.test.ts lib/grant-reports/dashboard-loader.test.ts lib/grant-reports/calendar.test.ts lib/grant-reports/annual-coverage.test.ts lib/grant-reports/financial-qa.test.ts lib/grant-reports/editor.test.ts lib/grant-reports/report-editor-route.test.ts lib/grant-reports/report-evidence-route.test.ts lib/grant-reports/presentation.test.ts lib/grant-reports/award-form.test.ts lib/grant-reports/obligation-form.test.ts lib/grant-reports/quarterly-period.test.ts lib/grant-reports/lifecycle.test.ts lib/grant-reports/agreement.test.ts lib/grant-reports/create-award-flow.test.ts lib/grant-reports/bank-import.test.ts lib/grant-reports/bank-statement-extraction.test.ts lib/grant-reports/bank-transaction-categorisation.test.ts lib/grant-reports/bank-transaction-posting.test.ts lib/grant-reports/financial-reconciliation.test.ts lib/grant-reports/submission-readiness.test.ts components/reports/grant-report-evidence.test.ts components/workflows/workflow-action-dialog.test.ts app/api/reports/route.test.ts app/api/grant-awards/route.test.ts app/api/grant-awards/agreements/stage/route.test.ts",
     "storage:verify": "tsx --conditions=react-server --env-file-if-exists=.env --env-file-if-exists=.env.local scripts/storage/verify-supabase.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.14.0",
     "@clerk/nextjs": "^6.32.0",
     "@supabase/supabase-js": "^2.112.0",
+    "dejavu-fonts-ttf": "^2.37.3",
     "framer-motion": "^11.15.0",
     "next": "^15.0.0",
     "next-auth": "5.0.0-beta.30",
     "pdf-parse": "^2.4.5",
+    "pdfkit": "^0.20.2",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "lucide-react": "^0.468.0",
@@ -42,6 +44,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "@types/pdfkit": "^0.17.6",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "autoprefixer": "^10.4.20",
