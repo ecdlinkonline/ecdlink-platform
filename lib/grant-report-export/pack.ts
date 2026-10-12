@@ -35,6 +35,7 @@ export class GrantReportSubmissionPackError extends Error {
 export type GrantReportSubmissionPackArtifact = {
   stream: Readable;
   byteSize: number;
+  sha256: string;
   manifest: ReturnType<typeof buildGrantReportSubmissionPackManifest>;
   cleanup(): Promise<void>;
 };
@@ -65,6 +66,12 @@ type PreparedEvidence = {
 
 function sha256(value: Uint8Array) {
   return createHash("sha256").update(value).digest("hex");
+}
+
+async function sha256File(path: string) {
+  const hash = createHash("sha256");
+  for await (const chunk of createReadStream(path)) hash.update(chunk as Buffer);
+  return hash.digest("hex");
 }
 
 export function sanitizeArchiveSegment(value: string, fallback: string) {
@@ -305,6 +312,7 @@ export async function createGrantReportSubmissionPack(
     const zipPath = join(directory, "submission-pack.zip");
     await writeArchive(zipPath, pdfPath, manifestPath, prepared, maximumZipBytes, deadline, options.signal);
     const zipStats = await stat(zipPath);
+    const zipSha256 = await guarded(sha256File(zipPath), deadline, options.signal);
     const stream = createReadStream(zipPath);
     const streamStartMilliseconds = options.streamStartMilliseconds ?? grantReportExportLimits.streamStartMilliseconds;
     const streamLifetimeMilliseconds = options.streamLifetimeMilliseconds ?? grantReportExportLimits.streamLifetimeMilliseconds;
@@ -340,7 +348,7 @@ export async function createGrantReportSubmissionPack(
     options.signal?.addEventListener("abort", onAbort, { once: true });
     if (options.signal?.aborted) onAbort();
     retained = true;
-    return { stream, byteSize: zipStats.size, manifest, cleanup };
+    return { stream, byteSize: zipStats.size, sha256: zipSha256, manifest, cleanup };
   } finally {
     if (!retained) await rm(directory, { recursive: true, force: true });
   }

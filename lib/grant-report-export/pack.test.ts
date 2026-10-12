@@ -106,8 +106,10 @@ test("submission pack contains the PDF, evidence bytes and matching canonical ma
   const { source, contents } = sourceFor();
   const counters = { reads: 0, writes: 0 };
   const artifact = await createGrantReportSubmissionPack(source, { now: new Date("2027-01-05T12:00:00.000Z") }, dependencies(contents, counters));
-  const zip = await readZip(await streamToBuffer(artifact.stream));
+  const archiveBytes = await streamToBuffer(artifact.stream);
+  const zip = await readZip(archiveBytes);
   await artifact.cleanup();
+  assert.equal(artifact.sha256, checksum(archiveBytes));
   assert.deepEqual([...zip.keys()].sort(), ["evidence/invoice/001-invoice.pdf", "manifest.json", "report/ECDLink-Report.pdf"]);
   assert.deepEqual(zip.get("report/ECDLink-Report.pdf"), renderedReport);
   assert.deepEqual(zip.get("evidence/invoice/001-invoice.pdf"), syntheticPdf);
