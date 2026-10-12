@@ -398,6 +398,30 @@ enum GrantReportDocumentType {
   OTHER
 }
 
+enum GrantReportExportFormat {
+  SUBMISSION_PACK_ZIP
+}
+
+enum GrantReportExportStatus {
+  GENERATING
+  COMPLETED
+  FAILED
+}
+
+enum GrantReportExportAttemptStatus {
+  GENERATING
+  COMPLETED
+  FAILED
+  ABANDONED
+}
+
+enum GrantReportExportIntegrityStatus {
+  PENDING
+  VERIFIED
+  UNAVAILABLE
+  CORRUPT
+}
+
 enum GrantReviewDecision {
   COMMENT
   RETURNED
@@ -644,6 +668,8 @@ model User {
   grantReportVersionsPrepared   GrantReportVersion[]           @relation("GrantReportVersionsPreparedBy")
   grantReportVersionsSubmitted  GrantReportVersion[]           @relation("GrantReportVersionsSubmittedBy")
   grantReportDocumentsUploaded  GrantReportDocument[]          @relation("GrantReportDocumentsUploadedBy")
+  grantReportExportsCompleted   GrantReportExportArtifact[]     @relation("GrantReportExportCompletedBy")
+  grantReportExportAttempts     GrantReportExportAttempt[]      @relation("GrantReportExportAttemptStartedBy")
   grantReportReviews            GrantReportReview[]            @relation("GrantReportReviewsByUser")
   grantReportCertifications     GrantReportCertification[]     @relation("GrantReportCertificationsConfirmedBy")
   grantExpenseAllocations       GrantExpenseAllocation[]       @relation("GrantExpenseAllocationsByUser")
@@ -2340,7 +2366,9 @@ model GrantReportVersion {
   sustainabilityItems         GrantReportSustainabilityItem[]
   certifications              GrantReportCertification[]
   bankTransactionSources      GrantReportBankTransactionSource[]
+  exportArtifacts             GrantReportExportArtifact[]
 
+  @@unique([id, grantReportId])
   @@unique([grantReportId, versionNumber])
   @@index([grantReportId, status])
   @@index([submittedByUserId, submittedAt])
@@ -2493,6 +2521,65 @@ model GrantReportDocument {
   @@index([indicatorId])
   @@index([financialLineId])
   @@index([fileAssetId])
+}
+
+model GrantReportExportArtifact {
+  id                      String                           @id @default(cuid())
+  grantReportId           String
+  grantReportVersionId    String
+  format                  GrantReportExportFormat
+  status                  GrantReportExportStatus          @default(GENERATING)
+  integrityStatus         GrantReportExportIntegrityStatus @default(PENDING)
+  latestAttemptNumber     Int                              @default(0)
+  completedFileAssetId    String?                          @unique
+  sha256                  String?                          @db.Char(64)
+  byteSize                Int?
+  manifestSchemaVersion   Int?
+  storageObjectVersion    String?                          @db.VarChar(255)
+  completedByUserId       String?
+  completedAt             DateTime?
+  lastIntegrityVerifiedAt DateTime?
+  createdAt               DateTime                         @default(now())
+  updatedAt               DateTime                         @updatedAt
+  reportVersion           GrantReportVersion               @relation(fields: [grantReportVersionId, grantReportId], references: [id, grantReportId], onDelete: Restrict, map: "GrantReportExportArtifact_version_fkey")
+  completedFile           FileAsset?                       @relation("GrantReportExportCompletedFile", fields: [completedFileAssetId], references: [id], onDelete: Restrict, map: "GrantReportExportArtifact_completed_file_fkey")
+  completedBy             User?                            @relation("GrantReportExportCompletedBy", fields: [completedByUserId], references: [id], onDelete: Restrict, map: "GrantReportExportArtifact_completed_by_fkey")
+  attempts                GrantReportExportAttempt[]
+
+  @@unique([grantReportVersionId, format], map: "GrantReportExportArtifact_version_format_key")
+  @@index([grantReportId, grantReportVersionId], map: "GrantReportExportArtifact_report_version_idx")
+  @@index([status, createdAt], map: "GrantReportExportArtifact_status_created_idx")
+}
+
+model GrantReportExportAttempt {
+  id                    String                         @id @default(cuid())
+  artifactId            String
+  attemptNumber         Int
+  generationToken       String                         @unique @db.VarChar(64)
+  status                GrantReportExportAttemptStatus @default(GENERATING)
+  stagedFileAssetId     String?                        @unique
+  expectedSha256        String?                        @db.Char(64)
+  expectedByteSize      Int?
+  manifestSchemaVersion Int?
+  startedByUserId       String
+  startedAt             DateTime                       @default(now())
+  leaseExpiresAt        DateTime
+  finishedAt            DateTime?
+  failureCode           String?                        @db.VarChar(64)
+  cleanupEligibleAt     DateTime?
+  cleanupToken          String?                        @unique @db.VarChar(64)
+  cleanupLeaseExpiresAt DateTime?
+  cleanedAt             DateTime?
+  createdAt             DateTime                       @default(now())
+  updatedAt             DateTime                       @updatedAt
+  artifact              GrantReportExportArtifact      @relation(fields: [artifactId], references: [id], onDelete: Restrict, map: "GrantReportExportAttempt_artifact_fkey")
+  stagedFile            FileAsset?                     @relation("GrantReportExportAttemptFile", fields: [stagedFileAssetId], references: [id], onDelete: Restrict, map: "GrantReportExportAttempt_staged_file_fkey")
+  startedBy             User                           @relation("GrantReportExportAttemptStartedBy", fields: [startedByUserId], references: [id], onDelete: Restrict, map: "GrantReportExportAttempt_started_by_fkey")
+
+  @@unique([artifactId, attemptNumber], map: "GrantReportExportAttempt_artifact_number_key")
+  @@index([artifactId, status, leaseExpiresAt], map: "GrantReportExportAttempt_artifact_status_lease_idx")
+  @@index([status, leaseExpiresAt], map: "GrantReportExportAttempt_status_lease_idx")
+  @@index([status, cleanupEligibleAt], map: "GrantReportExportAttempt_status_cleanup_idx")
 }
 
 model GrantReportReview {
@@ -2866,6 +2953,8 @@ model FileAsset {
   grantReportDocuments       GrantReportDocument[]       @relation("GrantReportDocuments")
   grantAwardSignedAgreement  GrantAward?                 @relation("GrantAwardSignedAgreement")
   grantBankStatement         GrantBankStatement?         @relation("GrantBankStatementFile")
+  completedGrantReportExport GrantReportExportArtifact?   @relation("GrantReportExportCompletedFile")
+  grantReportExportAttempt   GrantReportExportAttempt?    @relation("GrantReportExportAttemptFile")
 }
 
 model IntelligenceQuery {
