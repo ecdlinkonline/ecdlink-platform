@@ -16,6 +16,22 @@ export class UnsupportedGrantReportExportTypeError extends Error {
 
 type ExportClient = Pick<Prisma.TransactionClient, "grantReportVersion" | "grantReportFinancialLine" | "grantReportDocument" | "auditLog">;
 
+export type GrantReportExportEvidenceSource = {
+  documentId: string;
+  fileAssetId: string;
+  storageProvider: string;
+  storageKey: string;
+  originalFilename: string;
+  mimeType: string;
+  fileSize: number;
+  checksum: string | null;
+};
+
+export type GrantReportVersionExportSource = {
+  data: GrantReportExportData;
+  evidenceFiles: GrantReportExportEvidenceSource[];
+};
+
 function iso(value: Date | null | undefined) {
   return value?.toISOString() ?? null;
 }
@@ -49,10 +65,10 @@ function submissionMetadata(value: Prisma.JsonValue | null) {
   return { state, warningAcknowledged, warnings };
 }
 
-export async function getGrantReportVersionExportData(
+async function loadGrantReportVersionExportSource(
   input: { reportId: string; versionId: string },
   client: ExportClient = prisma,
-): Promise<GrantReportExportData | null> {
+): Promise<GrantReportVersionExportSource | null> {
   const core = await client.grantReportVersion.findFirst({
     where: { id: input.versionId, grantReportId: input.reportId },
     select: {
@@ -134,6 +150,8 @@ export async function getGrantReportVersionExportData(
       select: {
         id: true, documentType: true, title: true, description: true, originalFilenameSnapshot: true,
         mimeTypeSnapshot: true, fileSizeSnapshot: true, checksumSnapshot: true, uploadedAt: true,
+        fileAssetId: true,
+        file: { select: { storageProvider: true, storageKey: true, originalFilename: true, mimeType: true, fileSize: true, checksum: true } },
         indicator: { select: { id: true, objective: true } },
         financialLine: { select: { id: true, categoryName: true, lineType: true } },
       },
@@ -221,5 +239,31 @@ export async function getGrantReportVersionExportData(
   const narrativeCharacters = Object.values(data.narratives).reduce((total, value) => total + (value?.length ?? 0), 0);
   assertBoundedCount("narrativeCharacters", narrativeCharacters);
   assertExportInputSize(data);
-  return data;
+  return {
+    data,
+    evidenceFiles: evidence.map((document) => ({
+      documentId: document.id,
+      fileAssetId: document.fileAssetId,
+      storageProvider: document.file.storageProvider,
+      storageKey: document.file.storageKey,
+      originalFilename: document.file.originalFilename,
+      mimeType: document.file.mimeType,
+      fileSize: document.file.fileSize,
+      checksum: document.file.checksum,
+    })),
+  };
+}
+
+export async function getGrantReportVersionExportData(
+  input: { reportId: string; versionId: string },
+  client: ExportClient = prisma,
+) {
+  return (await loadGrantReportVersionExportSource(input, client))?.data ?? null;
+}
+
+export async function getGrantReportVersionExportSource(
+  input: { reportId: string; versionId: string },
+  client: ExportClient = prisma,
+) {
+  return loadGrantReportVersionExportSource(input, client);
 }

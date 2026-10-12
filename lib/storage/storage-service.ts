@@ -15,6 +15,14 @@ type StoredFileRecord = SafeFileAsset & {
   uploadedByUserId: string | null;
 };
 
+export type KnownPrivateFileReference = {
+  storageProvider: string;
+  storageKey: string;
+  originalFilename: string;
+  mimeType: string;
+  fileSize: number;
+};
+
 export interface StoragePersistence {
   createFileAsset(input: {
     id: string;
@@ -187,6 +195,13 @@ export class StorageService {
     return { content, originalFilename: file.originalFilename, mimeType: file.mimeType, fileSize: file.fileSize };
   }
 
+  async readKnownPrivateFileForProcessing(file: KnownPrivateFileReference): Promise<PrivateFileContent> {
+    if (file.storageProvider !== "supabase") throw new StorageAccessError("Stored file content is unavailable.", 404);
+    const content = await this.provider.read(file.storageKey);
+    if (content.byteLength !== file.fileSize) throw new StorageAccessError("The private file content is incomplete.", 502);
+    return { content, originalFilename: file.originalFilename, mimeType: file.mimeType, fileSize: file.fileSize };
+  }
+
   async exists(input: { fileAssetId: string; context: StorageAccessContext }) {
     const file = await this.persistence.findFileAsset(input.fileAssetId);
     if (!file || file.storageProvider !== "supabase") return false;
@@ -251,6 +266,7 @@ export const storage = {
   createPreviewAccess: (input: { fileAssetId: string; context: StorageAccessContext }) => getStorageService().createPreviewAccess(input),
   createDownloadAccess: (input: { fileAssetId: string; context: StorageAccessContext }) => getStorageService().createDownloadAccess(input),
   readFileForProcessing: (fileAssetId: string) => getStorageService().readFileForProcessing(fileAssetId),
+  readKnownPrivateFileForProcessing: (file: KnownPrivateFileReference) => getStorageService().readKnownPrivateFileForProcessing(file),
   exists: (input: { fileAssetId: string; context: StorageAccessContext }) => getStorageService().exists(input),
   rollbackStagedFileAsset: (input: { fileAssetId: string; uploadedByUserId: string; module: StorageModule; ownerId: string; entityId: string }) => getStorageService().rollbackStagedFileAsset(input),
 };

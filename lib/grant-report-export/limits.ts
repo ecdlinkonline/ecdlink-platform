@@ -3,6 +3,9 @@ export const grantReportExportLimits = {
   beneficiaries: 50, racialProfileRows: 10, sustainabilityItems: 100,
   narrativeCharacters: 250_000, estimatedInputBytes: 8 * 1024 * 1024,
   generatedPdfBytes: 12 * 1024 * 1024, generationMilliseconds: 15_000,
+  aggregateEvidenceBytes: 100 * 1024 * 1024, generatedZipBytes: 128 * 1024 * 1024,
+  temporaryDiskBytes: 250 * 1024 * 1024, packGenerationMilliseconds: 30_000,
+  streamStartMilliseconds: 60_000, streamLifetimeMilliseconds: 10 * 60_000,
 } as const;
 
 export class GrantReportExportLimitError extends Error {

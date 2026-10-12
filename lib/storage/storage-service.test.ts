@@ -70,3 +70,19 @@ test("private processing reads bytes without creating a signed public access URL
   assert.equal(file.mimeType, "application/pdf");
   assert.equal(signed, false);
 });
+
+test("known private processing reads use the validated server-owned storage reference without persistence writes", async () => {
+  const { provider, persistence } = mocks();
+  let persistenceReads = 0;
+  persistence.findFileAsset = async () => { persistenceReads += 1; return null; };
+  const service = new StorageService(provider, persistence, { signedUrlTtlSeconds: 300 });
+  const file = await service.readKnownPrivateFileForProcessing({
+    storageProvider: "supabase",
+    storageKey: "funding/version/document/evidence.pdf",
+    originalFilename: "evidence.pdf",
+    mimeType: "application/pdf",
+    fileSize: 6,
+  });
+  assert.equal(file.content.byteLength, 6);
+  assert.equal(persistenceReads, 0);
+});

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { Prisma } from "@prisma/client";
 import { GrantReportExportLimitError, grantReportExportLimits } from "@/lib/grant-report-export/limits";
-import { getGrantReportVersionExportData, UnsupportedGrantReportExportTypeError } from "@/lib/grant-report-export/repository";
+import { getGrantReportVersionExportData, getGrantReportVersionExportSource, UnsupportedGrantReportExportTypeError } from "@/lib/grant-report-export/repository";
 
 function decimal(value: string) {
   return new Prisma.Decimal(value);
@@ -38,7 +38,7 @@ function core(status: "DRAFT" | "SUBMITTED" = "DRAFT", reportType = "QUARTERLY_C
   };
 }
 
-function clientFor(selected: ReturnType<typeof core>, options: { indicators?: number } = {}) {
+function clientFor(selected: ReturnType<typeof core>, options: { indicators?: number; evidence?: Array<Record<string, unknown>> } = {}) {
   const calls: Array<{ model: string; args: Record<string, unknown> }> = [];
   let active = 0;
   let maximumActive = 0;
@@ -57,7 +57,7 @@ function clientFor(selected: ReturnType<typeof core>, options: { indicators?: nu
   const client = {
     grantReportVersion: { findFirst: async (args: Record<string, unknown>) => { calls.push({ model: "version", args }); return selected; } },
     grantReportFinancialLine: { findMany: (args: Record<string, unknown>) => secondary("financial", args, []) },
-    grantReportDocument: { findMany: (args: Record<string, unknown>) => secondary("evidence", args, []) },
+    grantReportDocument: { findMany: (args: Record<string, unknown>) => secondary("evidence", args, options.evidence ?? []) },
     auditLog: { findFirst: (args: Record<string, unknown>) => secondary("audit", args, selected.status === "SUBMITTED" ? { metadata: { readinessState: "READY", warningAcknowledged: false, readinessWarningSnapshotVersion: 1, readinessWarnings: [] } } : null) },
   };
   return { client, calls, getMaximumActive: () => maximumActive };
@@ -72,6 +72,24 @@ test("repository selects one exact version with four bounded operations and conc
   assert.equal((mock.calls.find((call) => call.model === "financial")?.args.take), grantReportExportLimits.financialLines + 1);
   assert.equal((mock.calls.find((call) => call.model === "evidence")?.args.take), grantReportExportLimits.evidenceItems + 1);
   assert.equal(result?.identity.centreName, "Current Centre");
+});
+
+test("submission-pack source keeps private FileAsset references server-side and version scoped", async () => {
+  const evidence = [{
+    id: "document-1", documentType: "INVOICE", title: "Invoice", description: null,
+    originalFilenameSnapshot: "invoice.pdf", mimeTypeSnapshot: "application/pdf", fileSizeSnapshot: 6,
+    checksumSnapshot: "a".repeat(64), uploadedAt: new Date("2026-08-01T00:00:00.000Z"),
+    fileAssetId: "asset-1",
+    file: { storageProvider: "supabase", storageKey: "private/report/version/asset-1/invoice.pdf", originalFilename: "invoice.pdf", mimeType: "application/pdf", fileSize: 6, checksum: "a".repeat(64) },
+    indicator: null, financialLine: null,
+  }];
+  const mock = clientFor(core(), { evidence });
+  const source = await getGrantReportVersionExportSource({ reportId: "report-1", versionId: "version-selected" }, mock.client as never);
+  assert.equal(source?.data.evidence[0].id, "document-1");
+  assert.equal(source?.evidenceFiles[0].storageKey, "private/report/version/asset-1/invoice.pdf");
+  const evidenceCall = mock.calls.find((call) => call.model === "evidence");
+  assert.deepEqual(evidenceCall?.args.where, { grantReportVersionId: "version-selected" });
+  assert.equal(JSON.stringify(source?.data).includes("storageKey"), false);
 });
 
 test("submitted historical versions use snapshots and never current award identity", async () => {

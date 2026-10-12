@@ -50,3 +50,47 @@ export function buildGrantReportIntegrityManifest(data: GrantReportExportData, p
     generatedPdf: { sha256: sha256(pdf), sizeBytes: pdf.byteLength },
   };
 }
+
+export type GrantReportSubmissionPackEvidenceEntry = {
+  documentId: string;
+  archivePath: string;
+  documentType: string;
+  originalFilename: string;
+  mimeType: string;
+  sizeBytes: number;
+  sha256: string;
+};
+
+export function buildGrantReportSubmissionPackManifest(
+  data: GrantReportExportData,
+  pdf: Buffer,
+  evidence: GrantReportSubmissionPackEvidenceEntry[],
+  generatedAt: Date,
+) {
+  const content = {
+    report: {
+      id: data.report.id,
+      versionId: data.report.versionId,
+      versionNumber: data.report.versionNumber,
+      reportType: data.report.reportType,
+      reportStatus: data.report.reportStatus,
+      versionStatus: data.report.versionStatus,
+      reportingPeriodStart: data.report.reportingPeriodStart,
+      reportingPeriodEnd: data.report.reportingPeriodEnd,
+    },
+    currency: data.report.currency,
+    reportPdf: {
+      archivePath: "report/ECDLink-Report.pdf",
+      sha256: sha256(pdf),
+      sizeBytes: pdf.byteLength,
+    },
+    evidence,
+    historicalIntegrity: data.historicalIntegrity,
+  };
+  return {
+    manifestSchemaVersion: 2,
+    content,
+    contentSha256: sha256(canonicalGrantReportManifestJson(content)),
+    generation: { generatedAt: generatedAt.toISOString() },
+  };
+}
