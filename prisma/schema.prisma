@@ -422,6 +422,14 @@ enum GrantReportExportIntegrityStatus {
   CORRUPT
 }
 
+enum GrantReportExportRequestStatus {
+  QUEUED
+  DISPATCHING
+  DISPATCHED
+  COMPLETED
+  FAILED
+}
+
 enum GrantReviewDecision {
   COMMENT
   RETURNED
@@ -670,6 +678,7 @@ model User {
   grantReportDocumentsUploaded  GrantReportDocument[]          @relation("GrantReportDocumentsUploadedBy")
   grantReportExportsCompleted   GrantReportExportArtifact[]     @relation("GrantReportExportCompletedBy")
   grantReportExportAttempts     GrantReportExportAttempt[]      @relation("GrantReportExportAttemptStartedBy")
+  grantReportExportRequests     GrantReportExportRequest[]      @relation("GrantReportExportRequestRequestedBy")
   grantReportReviews            GrantReportReview[]            @relation("GrantReportReviewsByUser")
   grantReportCertifications     GrantReportCertification[]     @relation("GrantReportCertificationsConfirmedBy")
   grantExpenseAllocations       GrantExpenseAllocation[]       @relation("GrantExpenseAllocationsByUser")
@@ -2367,6 +2376,7 @@ model GrantReportVersion {
   certifications              GrantReportCertification[]
   bankTransactionSources      GrantReportBankTransactionSource[]
   exportArtifacts             GrantReportExportArtifact[]
+  exportRequests              GrantReportExportRequest[]
 
   @@unique([id, grantReportId])
   @@unique([grantReportId, versionNumber])
@@ -2545,10 +2555,42 @@ model GrantReportExportArtifact {
   completedFile           FileAsset?                       @relation("GrantReportExportCompletedFile", fields: [completedFileAssetId], references: [id], onDelete: Restrict, map: "GrantReportExportArtifact_completed_file_fkey")
   completedBy             User?                            @relation("GrantReportExportCompletedBy", fields: [completedByUserId], references: [id], onDelete: Restrict, map: "GrantReportExportArtifact_completed_by_fkey")
   attempts                GrantReportExportAttempt[]
+  requests                GrantReportExportRequest[]       @relation("GrantReportExportRequestArtifact")
 
+  @@unique([id, grantReportVersionId, grantReportId, format], map: "GrantReportExportArtifact_ownership_key")
   @@unique([grantReportVersionId, format], map: "GrantReportExportArtifact_version_format_key")
   @@index([grantReportId, grantReportVersionId], map: "GrantReportExportArtifact_report_version_idx")
   @@index([status, createdAt], map: "GrantReportExportArtifact_status_created_idx")
+}
+
+model GrantReportExportRequest {
+  id                     String                         @id @default(cuid())
+  grantReportId          String
+  grantReportVersionId   String
+  format                 GrantReportExportFormat
+  requestedByUserId      String
+  status                 GrantReportExportRequestStatus @default(QUEUED)
+  idempotencyKey         String                         @unique @db.Char(64)
+  dispatchAttemptCount   Int                            @default(0)
+  nextDispatchAt         DateTime                       @default(now())
+  dispatchToken          String?                        @unique @db.Char(64)
+  dispatchLeaseExpiresAt DateTime?
+  queueMessageId         String?                        @db.VarChar(255)
+  dispatchedAt           DateTime?
+  lastSafeFailureCode    String?                        @db.VarChar(64)
+  artifactId             String?
+  completedAt            DateTime?
+  failedAt               DateTime?
+  createdAt              DateTime                       @default(now())
+  updatedAt              DateTime                       @updatedAt
+  reportVersion          GrantReportVersion             @relation(fields: [grantReportVersionId, grantReportId], references: [id, grantReportId], onDelete: Restrict, map: "GrantReportExportRequest_version_fkey")
+  requestedBy            User                           @relation("GrantReportExportRequestRequestedBy", fields: [requestedByUserId], references: [id], onDelete: Restrict, map: "GrantReportExportRequest_requested_by_fkey")
+  artifact               GrantReportExportArtifact?     @relation("GrantReportExportRequestArtifact", fields: [artifactId, grantReportVersionId, grantReportId, format], references: [id, grantReportVersionId, grantReportId, format], onDelete: Restrict, map: "GrantReportExportRequest_artifact_fkey")
+
+  @@index([status, nextDispatchAt], map: "GrantReportExportRequest_status_next_dispatch_idx")
+  @@index([status, dispatchLeaseExpiresAt], map: "GrantReportExportRequest_status_dispatch_lease_idx")
+  @@index([grantReportId, grantReportVersionId, createdAt], map: "GrantReportExportRequest_report_version_created_idx")
+  @@index([requestedByUserId, createdAt], map: "GrantReportExportRequest_requested_by_created_idx")
 }
 
 model GrantReportExportAttempt {
