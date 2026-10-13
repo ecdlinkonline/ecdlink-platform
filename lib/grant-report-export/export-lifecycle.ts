@@ -95,3 +95,12 @@ export function assertGrantReportExportStoragePath(path: string, ownership: Expo
   }
   return expected;
 }
+
+const exportStoragePathPattern = /^grant-report-exports\/[A-Za-z0-9_-]{1,128}\/[A-Za-z0-9_-]{1,128}\/[A-Za-z0-9_-]{1,128}\/attempt-[1-9]\d*-[a-f0-9]{16}\/[A-Za-z0-9_-]{1,128}\/ECDLink-Submission-Pack\.zip$/;
+
+export function assertGrantReportExportStoragePathShape(path: string) {
+  if (!exportStoragePathPattern.test(path)) {
+    throw new GrantReportExportLifecycleError("INVALID_STORAGE_PATH", "Export storage ownership is invalid.");
+  }
+  return path;
+}

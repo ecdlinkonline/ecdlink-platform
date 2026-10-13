@@ -14,6 +14,7 @@ const productionEnvironmentSchema = z.object({
   SUPABASE_URL: z.string().url().refine((value) => new URL(value).protocol === "https:", "Supabase must use HTTPS."),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(20),
   SUPABASE_STORAGE_BUCKET: z.string().min(3),
+  SUPABASE_EXPORT_STORAGE_BUCKET: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{1,98}[A-Za-z0-9]$/),
   SUPABASE_SIGNED_URL_TTL_SECONDS: z.coerce.number().int().min(60).max(900),
   EMAIL_PROVIDER: z.enum(["noop", "resend"]),
   EMAIL_FROM: z.string().optional().default(""),

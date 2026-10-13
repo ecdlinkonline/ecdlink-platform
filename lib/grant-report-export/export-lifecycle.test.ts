@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   assertGrantReportExportStoragePath,
+  assertGrantReportExportStoragePathShape,
   buildGrantReportExportStoragePath,
   GrantReportExportLifecycleError,
 } from "@/lib/grant-report-export/export-lifecycle";
@@ -27,12 +28,17 @@ test("export storage paths are deterministic and attempt-specific without exposi
 test("cleanup path validation rejects cross-attempt and traversal paths", () => {
   const path = buildGrantReportExportStoragePath(ownership);
   assert.equal(assertGrantReportExportStoragePath(path, ownership), path);
+  assert.equal(assertGrantReportExportStoragePathShape(path), path);
   assert.throws(
     () => assertGrantReportExportStoragePath(path, { ...ownership, attemptNumber: 3 }),
     (error: unknown) => error instanceof GrantReportExportLifecycleError && error.code === "INVALID_STORAGE_PATH",
   );
   assert.throws(
     () => buildGrantReportExportStoragePath({ ...ownership, reportId: "../other-report" }),
+    (error: unknown) => error instanceof GrantReportExportLifecycleError && error.code === "INVALID_STORAGE_PATH",
+  );
+  assert.throws(
+    () => assertGrantReportExportStoragePathShape("grant-report-exports/report/version/artifact/attempt-1-bad/../../other.zip"),
     (error: unknown) => error instanceof GrantReportExportLifecycleError && error.code === "INVALID_STORAGE_PATH",
   );
 });

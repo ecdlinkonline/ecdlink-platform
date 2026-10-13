@@ -10,6 +10,7 @@ Set these server-only variables in every deployed environment:
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=replace_with_server_only_service_role_key
 SUPABASE_STORAGE_BUCKET=ecdlink-private
+SUPABASE_EXPORT_STORAGE_BUCKET=ecdlink-report-exports
 SUPABASE_SIGNED_URL_TTL_SECONDS=300
 ```
 
@@ -33,6 +34,12 @@ npm run storage:verify
 ```
 
 The command skips safely when credentials are absent. It never creates, changes, empties, or deletes a bucket.
+
+## Grant report export bucket
+
+Generated ZIP submission packs use the separate `ecdlink-report-exports` bucket. Configure it manually with public access disabled, an exact 134,217,728-byte file limit, and `application/zip` as its only allowed MIME type. Do not reuse or change `ecdlink-private`; its smaller evidence policy remains authoritative for uploaded report evidence.
+
+Exports are uploaded with `tus-js-client` because its Node client accepts a file-backed stream, supports bounded chunks and cancellation, and can avoid persisting resumable-upload capability URLs. The adapter uses 6 MiB chunks, create-only object semantics, a bounded deadline, and a private streamed readback before accepting the stored checksum and byte size. Application startup never creates or changes either bucket.
 
 ## Service boundary
 

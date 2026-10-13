@@ -15,6 +15,7 @@ function validEnvironment(): Record<string, string> {
     SUPABASE_URL: "https://project.example.test",
     SUPABASE_SERVICE_ROLE_KEY: "server-only-storage-key-for-tests",
     SUPABASE_STORAGE_BUCKET: "ecdlink-private",
+    SUPABASE_EXPORT_STORAGE_BUCKET: "ecdlink-report-exports",
     SUPABASE_SIGNED_URL_TTL_SECONDS: "300",
     EMAIL_PROVIDER: "noop",
     EMAIL_FROM: "",
@@ -72,5 +73,13 @@ test("requires a bounded integer readiness timeout", () => {
     const result = validateProductionEnvironment({ ...validEnvironment(), READINESS_CHECK_TIMEOUT_MS: value });
     assert.equal(result.valid, false);
     if (!result.valid) assert.ok(result.invalidFields.includes("READINESS_CHECK_TIMEOUT_MS"));
+  }
+});
+
+test("requires a separate safely named export storage bucket", () => {
+  for (const value of ["", "../ecdlink-private", "bucket/name"]) {
+    const result = validateProductionEnvironment({ ...validEnvironment(), SUPABASE_EXPORT_STORAGE_BUCKET: value });
+    assert.equal(result.valid, false);
+    if (!result.valid) assert.ok(result.invalidFields.includes("SUPABASE_EXPORT_STORAGE_BUCKET"));
   }
 });

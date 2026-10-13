@@ -5,6 +5,7 @@ import type { Readable } from "node:stream";
 import {
   assertGrantReportExportStoragePath,
   buildGrantReportExportStoragePath,
+  type ExportStorageOwnership,
   GrantReportExportLifecycleError,
   normalizeExportFailureCode,
   safeGrantReportExportError,
@@ -27,6 +28,7 @@ type Authorization = { error: Response } | { internalUser: { id: string }; [key:
 
 export type GrantReportExportStorage = {
   uploadAndVerify(input: {
+    ownership: ExportStorageOwnership;
     path: string;
     stream: Readable;
     contentType: "application/zip";
@@ -35,7 +37,7 @@ export type GrantReportExportStorage = {
     createOnly: true;
     signal: AbortSignal;
   }): Promise<{ path: string; byteSize: number; sha256: string; storageObjectVersion?: string | null }>;
-  removeOwnedObject(input: { path: string; ignoreMissing: true }): Promise<void>;
+  removeOwnedObject(input: { ownership: ExportStorageOwnership; path: string; ignoreMissing: true }): Promise<void>;
 };
 
 type LifecycleRepository = {
@@ -124,14 +126,15 @@ export async function generateGrantReportExportForAdmin(
     if (heartbeatFailure) throw heartbeatFailure;
 
     const fileAssetId = dependencies.fileAssetId?.() ?? randomUUID();
-    const storageKey = buildGrantReportExportStoragePath({
+    const storageOwnership = {
       reportId: input.reportId,
       versionId: input.versionId,
       artifactId: claim.artifactId,
       attemptNumber: claim.attemptNumber,
       generationToken: claim.generationToken,
       fileAssetId,
-    });
+    } satisfies ExportStorageOwnership;
+    const storageKey = buildGrantReportExportStoragePath(storageOwnership);
     const manifestSchemaVersion = pack.manifest.manifestSchemaVersion;
     await repository.stage({
       ...claim,
@@ -144,6 +147,7 @@ export async function generateGrantReportExportForAdmin(
     });
     failureCode = "STORAGE_UPLOAD_FAILED";
     const stored = await dependencies.storage.uploadAndVerify({
+      ownership: storageOwnership,
       path: storageKey,
       stream: pack.stream,
       contentType: "application/zip",
@@ -210,7 +214,18 @@ export async function cleanupGrantReportExportAttemptForAdmin(
       generationToken: claim.generationToken,
       fileAssetId: claim.fileAssetId,
     });
-    await dependencies.storage.removeOwnedObject({ path: claim.storageKey, ignoreMissing: true });
+    await dependencies.storage.removeOwnedObject({
+      ownership: {
+        reportId: claim.reportId,
+        versionId: claim.versionId,
+        artifactId: claim.artifactId,
+        attemptNumber: claim.attemptNumber,
+        generationToken: claim.generationToken,
+        fileAssetId: claim.fileAssetId,
+      },
+      path: claim.storageKey,
+      ignoreMissing: true,
+    });
     await repository.completeCleanup({ ...claim, actorUserId });
     return { kind: "cleaned" as const, attemptId: claim.attemptId, fileAssetId: claim.fileAssetId };
   } catch (error) {
