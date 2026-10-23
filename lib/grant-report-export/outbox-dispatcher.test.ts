@@ -47,28 +47,28 @@ test("publication heartbeats are sequential and keep a long publication owned", 
   let activeHeartbeats = 0;
   let maximumConcurrentHeartbeats = 0;
   let heartbeatCount = 0;
+  let releasePublication: (() => void) | undefined;
+  const twoHeartbeats = new Promise<void>((resolve) => { releasePublication = resolve; });
   const result = await dispatchNextGrantReportExportRequest({
     repository: repository({
       extendDispatchLease: async () => {
         activeHeartbeats += 1;
         maximumConcurrentHeartbeats = Math.max(maximumConcurrentHeartbeats, activeHeartbeats);
-        await new Promise((resolve) => setTimeout(resolve, 2));
         heartbeatCount += 1;
+        if (heartbeatCount === 2) releasePublication?.();
+        await Promise.resolve();
         activeHeartbeats -= 1;
         return new Date();
       },
     }),
     publisher: {
-      publishExportRequest: async ({ signal }) => {
-        await new Promise<void>((resolve, reject) => {
-          const timer = setTimeout(resolve, 35);
-          signal.addEventListener("abort", () => { clearTimeout(timer); reject(new Error("aborted")); }, { once: true });
-        });
+      publishExportRequest: async () => {
+        await twoHeartbeats;
         return { ok: true, messageId: "message-long", publishedAt: new Date() };
       },
     },
-    heartbeatMilliseconds: 5,
-    publicationTimeoutMilliseconds: 200,
+    heartbeatMilliseconds: 1,
+    publicationTimeoutMilliseconds: 1_000,
   });
   assert.equal(result.kind, "dispatched");
   assert.ok(heartbeatCount >= 2);

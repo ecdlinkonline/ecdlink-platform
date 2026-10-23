@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
@@ -145,23 +145,54 @@ test("concurrent create-only uploads allow one winner and reject the colliding a
   assert.doesNotMatch(rejected.reason.message, /provider details/i);
 });
 
-test("abort and upload deadlines close work with safe errors", async () => {
+async function exportUploadTemporaryDirectories() {
+  return new Set((await readdir(tmpdir())).filter((name) => name.startsWith("ecdlink-export-upload-")));
+}
+
+test("caller abort closes work with a safe error", async () => {
   const aborted = new AbortController();
   aborted.abort();
   await assert.rejects(
     () => new SupabaseGrantReportExportStorage(new FakeTransport()).uploadAndVerify(input({ signal: aborted.signal })),
     (error: unknown) => error instanceof GrantReportExportStorageError && error.code === "UPLOAD_ABORTED",
   );
+});
 
+test("a pre-upload deadline cleans its temporary directory without entering the provider", async (context) => {
+  context.mock.timers.enable({ apis: ["setTimeout"] });
+  const before = await exportUploadTemporaryDirectories();
   const transport = new FakeTransport();
-  transport.uploadFile = async ({ filePath, signal }) => new Promise((_, reject) => {
-    transport.lastFilePath = filePath;
-    signal.addEventListener("abort", () => reject(signal.reason), { once: true });
-  });
+  const pending = new SupabaseGrantReportExportStorage(transport, 10).uploadAndVerify(input());
+  context.mock.timers.tick(10);
   await assert.rejects(
-    () => new SupabaseGrantReportExportStorage(transport, 10).uploadAndVerify(input()),
+    () => pending,
     (error: unknown) => error instanceof GrantReportExportStorageError && error.code === "UPLOAD_TIMEOUT",
   );
+  assert.equal(transport.uploadCalls, 0);
+  const after = await exportUploadTemporaryDirectories();
+  assert.deepEqual([...after].filter((name) => !before.has(name)), []);
+});
+
+test("an in-upload deadline aborts provider work and removes the spooled file", async (context) => {
+  context.mock.timers.enable({ apis: ["setTimeout"] });
+  const transport = new FakeTransport();
+  let markUploadEntered!: () => void;
+  const uploadEntered = new Promise<void>((resolve) => { markUploadEntered = resolve; });
+  transport.uploadFile = async ({ filePath, signal }) => new Promise((_, reject) => {
+    transport.uploadCalls += 1;
+    transport.lastFilePath = filePath;
+    markUploadEntered();
+    signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+  });
+  const pending = new SupabaseGrantReportExportStorage(transport, 10).uploadAndVerify(input());
+  await uploadEntered;
+  context.mock.timers.tick(10);
+  await assert.rejects(
+    () => pending,
+    (error: unknown) => error instanceof GrantReportExportStorageError && error.code === "UPLOAD_TIMEOUT",
+  );
+  assert.equal(transport.uploadCalls, 1);
+  assert.ok(transport.lastFilePath);
   await assert.rejects(() => access(transport.lastFilePath!), { code: "ENOENT" });
 });
 
