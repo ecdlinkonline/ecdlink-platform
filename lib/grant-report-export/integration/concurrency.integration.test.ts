@@ -109,15 +109,21 @@ databaseIntegrationTest("E. recovery racing publication acknowledgement has one 
   } finally { await Promise.all([setup.disconnect(), first.disconnect(), second.disconnect()]); }
 });
 
-databaseIntegrationTest("F. generation lease decisions demonstrate the known Node-clock skew blocker", async () => {
+databaseIntegrationTest("F. generation leases ignore fast and slow application clocks", async () => {
   await withIntegrationClient(async (client) => {
     const fixture = await createSubmittedReportFixture(client, uniqueTestId("F"));
     const databaseNow = (await client.$queryRaw<Array<{ now: Date }>>(Prisma.sql`SELECT clock_timestamp() AS now`))[0].now;
-    const first = await claimGrantReportExportAttempt({ reportId: fixture.reportId, versionId: fixture.versionId, actorUserId: fixture.adminUserId }, { database: client as never, now: () => databaseNow });
+    const first = await claimGrantReportExportAttempt(
+      { reportId: fixture.reportId, versionId: fixture.versionId, actorUserId: fixture.adminUserId },
+      { database: client as never, now: () => new Date(databaseNow.getTime() - 10 * 60_000) } as never,
+    );
     assert.equal(first.kind, "claimed");
-    const skewed = await claimGrantReportExportAttempt({ reportId: fixture.reportId, versionId: fixture.versionId, actorUserId: fixture.adminUserId }, { database: client as never, now: () => new Date(databaseNow.getTime() + 10 * 60_000) });
-    assert.equal(skewed.kind, "claimed", "A fast process clock incorrectly abandons the database-valid lease; this assertion documents the blocker.");
-    if (skewed.kind === "claimed") assert.equal(skewed.attemptNumber, 2);
+    const fastClockClaim = await claimGrantReportExportAttempt(
+      { reportId: fixture.reportId, versionId: fixture.versionId, actorUserId: fixture.adminUserId },
+      { database: client as never, now: () => new Date(databaseNow.getTime() + 10 * 60_000) } as never,
+    );
+    assert.equal(fastClockClaim.kind, "in_progress");
+    assert.equal(await client.grantReportExportAttempt.count({ where: { artifact: { grantReportVersionId: fixture.versionId } } }), 1);
   });
 });
 
@@ -155,7 +161,11 @@ databaseIntegrationTest("I. stale generation completion is rejected", async () =
     const first = await claimGrantReportExportAttempt({ reportId: fixture.reportId, versionId: fixture.versionId, actorUserId: fixture.adminUserId }, { database: client as never });
     assert.equal(first.kind, "claimed");
     if (first.kind !== "claimed") return;
-    await client.grantReportExportAttempt.update({ where: { id: first.attemptId }, data: { leaseExpiresAt: new Date(Date.now() - 1) } });
+    await client.$executeRaw(Prisma.sql`
+      UPDATE "GrantReportExportAttempt"
+      SET "leaseExpiresAt" = clock_timestamp() - interval '1 millisecond'
+      WHERE "id" = ${first.attemptId}
+    `);
     await claimGrantReportExportAttempt({ reportId: fixture.reportId, versionId: fixture.versionId, actorUserId: fixture.adminUserId }, { database: client as never });
     await assert.rejects(() => completeGrantReportExportAttempt({ ...first, fileAssetId: "absent", sha256: "a".repeat(64), byteSize: 1, manifestSchemaVersion: 1, actorUserId: fixture.adminUserId }, { database: client as never }));
   });

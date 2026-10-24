@@ -1,6 +1,7 @@
 import "server-only";
 
 import { randomUUID } from "node:crypto";
+import { performance } from "node:perf_hooks";
 import type { Readable } from "node:stream";
 import {
   assertGrantReportExportStoragePath,
@@ -18,6 +19,7 @@ import {
   failGrantReportExportAttempt,
   releaseGrantReportExportCleanup,
   renewGrantReportExportAttemptLease,
+  renewGrantReportExportCleanupLease,
   stageGrantReportExportFile,
   type ClaimedGrantReportExportAttempt,
 } from "@/lib/grant-report-export/lifecycle-repository";
@@ -47,6 +49,7 @@ type LifecycleRepository = {
   complete: typeof completeGrantReportExportAttempt;
   fail: typeof failGrantReportExportAttempt;
   claimCleanup: typeof claimGrantReportExportCleanup;
+  renewCleanup: typeof renewGrantReportExportCleanupLease;
   completeCleanup: typeof completeGrantReportExportCleanup;
   releaseCleanup: typeof releaseGrantReportExportCleanup;
 };
@@ -58,9 +61,30 @@ const defaultRepository: LifecycleRepository = {
   complete: completeGrantReportExportAttempt,
   fail: failGrantReportExportAttempt,
   claimCleanup: claimGrantReportExportCleanup,
+  renewCleanup: renewGrantReportExportCleanupLease,
   completeCleanup: completeGrantReportExportCleanup,
   releaseCleanup: releaseGrantReportExportCleanup,
 };
+
+type CleanupScheduler = {
+  monotonicNow: () => number;
+  setInterval: (callback: () => void, milliseconds: number) => ReturnType<typeof setInterval>;
+  clearInterval: (handle: ReturnType<typeof setInterval>) => void;
+  setTimeout: (callback: () => void, milliseconds: number) => ReturnType<typeof setTimeout>;
+  clearTimeout: (handle: ReturnType<typeof setTimeout>) => void;
+};
+
+const defaultCleanupScheduler: CleanupScheduler = {
+  monotonicNow: () => performance.now(),
+  setInterval: (callback, milliseconds) => setInterval(callback, milliseconds),
+  clearInterval: (handle) => clearInterval(handle),
+  setTimeout: (callback, milliseconds) => setTimeout(callback, milliseconds),
+  clearTimeout: (handle) => clearTimeout(handle),
+};
+
+// This remains below the two-minute database cleanup lease. It bounds local work
+// while leaving time for the token-fenced release to make the attempt recoverable.
+const defaultCleanupDeadlineMilliseconds = 90_000;
 
 async function authorizeExportGeneration(): Promise<Authorization> {
   const { requireReportAdmin } = await import("@/lib/api/report-auth");
@@ -198,13 +222,91 @@ export async function cleanupGrantReportExportAttemptForAdmin(
     storage: GrantReportExportStorage;
     authorize?: () => Promise<Authorization>;
     repository?: LifecycleRepository;
+    heartbeatMilliseconds?: number;
+    cleanupDeadlineMilliseconds?: number;
+    cleanupScheduler?: CleanupScheduler;
   },
 ) {
   const authorization = await (dependencies.authorize ?? authorizeExportGeneration)();
   if ("error" in authorization) return authorization;
   const actorUserId = authorization.internalUser.id;
   const repository = dependencies.repository ?? defaultRepository;
+  const scheduler = dependencies.cleanupScheduler ?? defaultCleanupScheduler;
+  const heartbeatMilliseconds = Math.max(10, dependencies.heartbeatMilliseconds ?? 30_000);
+  const cleanupDeadlineMilliseconds = dependencies.cleanupDeadlineMilliseconds ?? defaultCleanupDeadlineMilliseconds;
+  if (!Number.isFinite(cleanupDeadlineMilliseconds) || cleanupDeadlineMilliseconds <= heartbeatMilliseconds) {
+    throw new GrantReportExportLifecycleError("CLEANUP_FAILED", "The export cleanup deadline is invalid.");
+  }
   const claim = await repository.claimCleanup({ attemptId: input.attemptId, actorUserId });
+  const cleanupStartedAt = scheduler.monotonicNow();
+  let heartbeatFailure: unknown;
+  let heartbeatPromise: Promise<void> | undefined;
+  let heartbeatStopped = false;
+  let controlSettled = false;
+  let resolveControl!: (outcome: { kind: "deadline" } | { kind: "heartbeat_failure"; error: unknown }) => void;
+  const control = new Promise<{ kind: "deadline" } | { kind: "heartbeat_failure"; error: unknown }>((resolve) => {
+    resolveControl = resolve;
+  });
+
+  function stopHeartbeatScheduler() {
+    if (heartbeatStopped) return;
+    heartbeatStopped = true;
+    scheduler.clearInterval(heartbeat);
+  }
+
+  function settleControl(outcome: { kind: "deadline" } | { kind: "heartbeat_failure"; error: unknown }) {
+    if (controlSettled) return;
+    controlSettled = true;
+    stopHeartbeatScheduler();
+    resolveControl(outcome);
+  }
+
+  const heartbeat = scheduler.setInterval(() => {
+    if (heartbeatPromise || heartbeatStopped) return;
+    if (scheduler.monotonicNow() - cleanupStartedAt >= cleanupDeadlineMilliseconds) {
+      settleControl({ kind: "deadline" });
+      return;
+    }
+    heartbeatPromise = repository.renewCleanup(claim).then(() => undefined).catch((error) => {
+      heartbeatFailure = error;
+      settleControl({ kind: "heartbeat_failure", error });
+    }).finally(() => { heartbeatPromise = undefined; });
+  }, heartbeatMilliseconds);
+  heartbeat.unref();
+
+  let deadline: ReturnType<typeof setTimeout>;
+  function enforceDeadline() {
+    const remaining = cleanupDeadlineMilliseconds - (scheduler.monotonicNow() - cleanupStartedAt);
+    if (remaining > 0) {
+      deadline = scheduler.setTimeout(enforceDeadline, remaining);
+      deadline.unref();
+      return;
+    }
+    settleControl({ kind: "deadline" });
+  }
+  deadline = scheduler.setTimeout(enforceDeadline, cleanupDeadlineMilliseconds);
+  deadline.unref();
+
+  const deadlineError = () => new GrantReportExportLifecycleError(
+    "CLEANUP_FAILED",
+    "The export cleanup exceeded its safe operation deadline.",
+  );
+
+  async function settleHeartbeatBeforeFinalization() {
+    stopHeartbeatScheduler();
+    const activeHeartbeat = heartbeatPromise;
+    if (activeHeartbeat) {
+      const outcome = await Promise.race([
+        activeHeartbeat.then(() => ({ kind: "heartbeat_settled" as const })),
+        control,
+      ]);
+      if (outcome.kind === "deadline") throw deadlineError();
+      if (outcome.kind === "heartbeat_failure") throw outcome.error;
+    }
+    if (heartbeatFailure) throw heartbeatFailure;
+    if (scheduler.monotonicNow() - cleanupStartedAt >= cleanupDeadlineMilliseconds) throw deadlineError();
+  }
+
   try {
     assertGrantReportExportStoragePath(claim.storageKey, {
       reportId: claim.reportId,
@@ -214,7 +316,7 @@ export async function cleanupGrantReportExportAttemptForAdmin(
       generationToken: claim.generationToken,
       fileAssetId: claim.fileAssetId,
     });
-    await dependencies.storage.removeOwnedObject({
+    const deletion = dependencies.storage.removeOwnedObject({
       ownership: {
         reportId: claim.reportId,
         versionId: claim.versionId,
@@ -225,15 +327,27 @@ export async function cleanupGrantReportExportAttemptForAdmin(
       },
       path: claim.storageKey,
       ignoreMissing: true,
-    });
+    }).then(
+      () => ({ kind: "deleted" as const }),
+      (error: unknown) => ({ kind: "deletion_failed" as const, error }),
+    );
+    const deletionOutcome = await Promise.race([deletion, control]);
+    if (deletionOutcome.kind === "deadline") throw deadlineError();
+    if (deletionOutcome.kind === "heartbeat_failure") throw deletionOutcome.error;
+    if (deletionOutcome.kind === "deletion_failed") throw deletionOutcome.error;
+    await settleHeartbeatBeforeFinalization();
     await repository.completeCleanup({ ...claim, actorUserId });
     return { kind: "cleaned" as const, attemptId: claim.attemptId, fileAssetId: claim.fileAssetId };
   } catch (error) {
+    stopHeartbeatScheduler();
     try {
       await repository.releaseCleanup({ ...claim, actorUserId, failureCode: "STORAGE_CLEANUP_FAILED" });
     } catch {
       throw safeGrantReportExportError(undefined, "CLEANUP_FAILED");
     }
     throw safeGrantReportExportError(error, "CLEANUP_FAILED");
+  } finally {
+    stopHeartbeatScheduler();
+    scheduler.clearTimeout(deadline);
   }
 }

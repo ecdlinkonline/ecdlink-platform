@@ -42,6 +42,80 @@ function storage(overrides: Partial<GrantReportExportStorage> = {}): GrantReport
   };
 }
 
+type ManualTimer = { id: number; unref: () => void };
+
+class ManualCleanupScheduler {
+  private current = 0;
+  private nextId = 1;
+  private readonly tasks = new Map<number, { at: number; callback: () => void; interval?: number }>();
+
+  monotonicNow = () => this.current;
+
+  setTimeout = (callback: () => void, milliseconds: number) => this.add(callback, milliseconds) as unknown as ReturnType<typeof setTimeout>;
+
+  clearTimeout = (handle: ReturnType<typeof setTimeout>) => { this.tasks.delete((handle as unknown as ManualTimer).id); };
+
+  setInterval = (callback: () => void, milliseconds: number) => this.add(callback, milliseconds, milliseconds) as unknown as ReturnType<typeof setInterval>;
+
+  clearInterval = (handle: ReturnType<typeof setInterval>) => { this.tasks.delete((handle as unknown as ManualTimer).id); };
+
+  pending() {
+    return this.tasks.size;
+  }
+
+  async advance(milliseconds: number) {
+    const target = this.current + milliseconds;
+    while (true) {
+      const due = [...this.tasks.entries()]
+        .filter(([, task]) => task.at <= target)
+        .sort(([leftId, left], [rightId, right]) => left.at - right.at || leftId - rightId)[0];
+      if (!due) break;
+      const [id, task] = due;
+      this.current = task.at;
+      if (task.interval) task.at += task.interval;
+      else this.tasks.delete(id);
+      task.callback();
+      await Promise.resolve();
+      await Promise.resolve();
+    }
+    this.current = target;
+    await Promise.resolve();
+    await Promise.resolve();
+  }
+
+  private add(callback: () => void, milliseconds: number, interval?: number) {
+    const id = this.nextId++;
+    this.tasks.set(id, { at: this.current + milliseconds, callback, interval });
+    return { id, unref: () => undefined } satisfies ManualTimer;
+  }
+}
+
+function deferred<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+function cleanupClaim(fileAssetId = "file-1") {
+  return {
+    ...claimed,
+    cleanupToken: "cleanup-token",
+    fileAssetId,
+    storageKey: buildGrantReportExportStoragePath({
+      reportId: claimed.reportId,
+      versionId: claimed.versionId,
+      artifactId: claimed.artifactId,
+      attemptNumber: claimed.attemptNumber,
+      generationToken: claimed.generationToken,
+      fileAssetId,
+    }),
+  };
+}
+
 test("storage writes are create-only and unknown provider failures are safely normalized", async () => {
   let createOnly: boolean | undefined;
   await assert.rejects(
@@ -236,6 +310,7 @@ test("a stale worker cannot complete or delete its uploaded attempt object", asy
 });
 
 test("cleanup removes only the exact attempt-owned path and finalizes metadata afterward", async () => {
+  const scheduler = new ManualCleanupScheduler();
   const fileAssetId = "file-1";
   const storageKey = buildGrantReportExportStoragePath({ reportId: "report-1", versionId: "version-1", artifactId: "artifact-1", attemptNumber: 1, generationToken: claimed.generationToken, fileAssetId });
   const removed: string[] = [];
@@ -248,9 +323,13 @@ test("cleanup removes only the exact attempt-owned path and finalizes metadata a
       storage: storage({ removeOwnedObject: async ({ path, ignoreMissing }) => { removed.push(path); ignoredMissing = ignoreMissing; } }),
       repository: {
         claimCleanup: async () => ({ ...claimed, cleanupToken: "cleanup-token", fileAssetId, storageKey }),
+        renewCleanup: async () => new Date(),
         completeCleanup: async () => { finalized += 1; },
         releaseCleanup: async () => true,
       } as never,
+      heartbeatMilliseconds: 10,
+      cleanupDeadlineMilliseconds: 25,
+      cleanupScheduler: scheduler,
     },
   );
   if ("error" in result) assert.fail("authorization unexpectedly failed");
@@ -258,6 +337,7 @@ test("cleanup removes only the exact attempt-owned path and finalizes metadata a
   assert.deepEqual(removed, [storageKey]);
   assert.equal(ignoredMissing, true);
   assert.equal(finalized, 1);
+  assert.equal(scheduler.pending(), 0);
 });
 
 test("cross-attempt cleanup paths are rejected, never removed, and the cleanup lease is released", async () => {
@@ -272,6 +352,7 @@ test("cross-attempt cleanup paths are rejected, never removed, and the cleanup l
         storage: storage({ removeOwnedObject: async () => { removed += 1; } }),
         repository: {
           claimCleanup: async () => ({ ...claimed, cleanupToken: "cleanup-token", fileAssetId: "file-1", storageKey: correct }),
+          renewCleanup: async () => new Date(),
           completeCleanup: async () => undefined,
           releaseCleanup: async () => { released += 1; return true; },
         } as never,
@@ -281,6 +362,230 @@ test("cross-attempt cleanup paths are rejected, never removed, and the cleanup l
   );
   assert.equal(removed, 0);
   assert.equal(released, 1);
+});
+
+test("cleanup ownership loss during deletion blocks completion and releases only the stale token", async () => {
+  const fileAssetId = "file-1";
+  const storageKey = buildGrantReportExportStoragePath({ reportId: "report-1", versionId: "version-1", artifactId: "artifact-1", attemptNumber: 1, generationToken: claimed.generationToken, fileAssetId });
+  let renewalStarted!: () => void;
+  const started = new Promise<void>((resolve) => { renewalStarted = resolve; });
+  let completed = 0;
+  let released = 0;
+  await assert.rejects(
+    () => cleanupGrantReportExportAttemptForAdmin(
+      { attemptId: "attempt-1" },
+      {
+        authorize: async () => ({ internalUser: { id: "admin-1" } }),
+        storage: storage({ removeOwnedObject: async () => { await started; } }),
+        repository: {
+          claimCleanup: async () => ({ ...claimed, cleanupToken: "cleanup-token", fileAssetId, storageKey }),
+          renewCleanup: async () => {
+            renewalStarted();
+            throw new GrantReportExportLifecycleError("CLEANUP_NOT_AVAILABLE", "stale");
+          },
+          completeCleanup: async () => { completed += 1; },
+          releaseCleanup: async () => { released += 1; return false; },
+        } as never,
+        heartbeatMilliseconds: 10,
+      },
+    ),
+    (error: unknown) => error instanceof GrantReportExportLifecycleError && error.code === "CLEANUP_NOT_AVAILABLE",
+  );
+  assert.equal(completed, 0);
+  assert.equal(released, 1);
+});
+
+test("cleanup deadline stops heartbeats, releases ownership, and never finalizes a stalled deletion", async () => {
+  const scheduler = new ManualCleanupScheduler();
+  const deletion = deferred();
+  let renewals = 0;
+  let completed = 0;
+  let released = 0;
+  const cleanup = cleanupGrantReportExportAttemptForAdmin(
+    { attemptId: "attempt-1" },
+    {
+      authorize: async () => ({ internalUser: { id: "admin-1" } }),
+      storage: storage({ removeOwnedObject: async () => deletion.promise }),
+      repository: {
+        claimCleanup: async () => cleanupClaim(),
+        renewCleanup: async () => { renewals += 1; return new Date(); },
+        completeCleanup: async () => { completed += 1; },
+        releaseCleanup: async () => { released += 1; return true; },
+      } as never,
+      heartbeatMilliseconds: 10,
+      cleanupDeadlineMilliseconds: 25,
+      cleanupScheduler: scheduler,
+    },
+  );
+  await Promise.resolve();
+  await Promise.resolve();
+  await scheduler.advance(10);
+  await scheduler.advance(10);
+  await scheduler.advance(5);
+  await assert.rejects(
+    cleanup,
+    (error: unknown) => error instanceof GrantReportExportLifecycleError
+      && error.code === "CLEANUP_FAILED"
+      && error.message.includes("deadline"),
+  );
+  assert.equal(renewals, 2);
+  assert.equal(completed, 0);
+  assert.equal(released, 1);
+  assert.equal(scheduler.pending(), 0);
+
+  deletion.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(completed, 0);
+  assert.equal(released, 1);
+});
+
+test("the first cleanup renewal ownership failure stops future renewals and stale finalization", async () => {
+  const scheduler = new ManualCleanupScheduler();
+  const deletion = deferred();
+  let renewals = 0;
+  let completed = 0;
+  let released = 0;
+  const cleanup = cleanupGrantReportExportAttemptForAdmin(
+    { attemptId: "attempt-1" },
+    {
+      authorize: async () => ({ internalUser: { id: "admin-1" } }),
+      storage: storage({ removeOwnedObject: async () => deletion.promise }),
+      repository: {
+        claimCleanup: async () => cleanupClaim(),
+        renewCleanup: async () => {
+          renewals += 1;
+          throw new GrantReportExportLifecycleError("CLEANUP_NOT_AVAILABLE", "stale");
+        },
+        completeCleanup: async () => { completed += 1; },
+        releaseCleanup: async () => { released += 1; return false; },
+      } as never,
+      heartbeatMilliseconds: 10,
+      cleanupDeadlineMilliseconds: 100,
+      cleanupScheduler: scheduler,
+    },
+  );
+  await Promise.resolve();
+  await Promise.resolve();
+  await scheduler.advance(10);
+  await assert.rejects(
+    cleanup,
+    (error: unknown) => error instanceof GrantReportExportLifecycleError && error.code === "CLEANUP_NOT_AVAILABLE",
+  );
+  await scheduler.advance(100);
+  assert.equal(renewals, 1);
+  assert.equal(completed, 0);
+  assert.equal(released, 1);
+  assert.equal(scheduler.pending(), 0);
+  deletion.resolve();
+});
+
+test("a cleanup renewal exception is sanitized and prevents every later renewal", async () => {
+  const scheduler = new ManualCleanupScheduler();
+  const deletion = deferred();
+  let renewals = 0;
+  let completed = 0;
+  const cleanup = cleanupGrantReportExportAttemptForAdmin(
+    { attemptId: "attempt-1" },
+    {
+      authorize: async () => ({ internalUser: { id: "admin-1" } }),
+      storage: storage({ removeOwnedObject: async () => deletion.promise }),
+      repository: {
+        claimCleanup: async () => cleanupClaim(),
+        renewCleanup: async () => {
+          renewals += 1;
+          throw new Error("private database diagnostics");
+        },
+        completeCleanup: async () => { completed += 1; },
+        releaseCleanup: async () => true,
+      } as never,
+      heartbeatMilliseconds: 10,
+      cleanupDeadlineMilliseconds: 100,
+      cleanupScheduler: scheduler,
+    },
+  );
+  await Promise.resolve();
+  await Promise.resolve();
+  await scheduler.advance(10);
+  await assert.rejects(
+    cleanup,
+    (error: unknown) => error instanceof GrantReportExportLifecycleError
+      && error.code === "CLEANUP_FAILED"
+      && !error.message.includes("private database diagnostics"),
+  );
+  await scheduler.advance(100);
+  assert.equal(renewals, 1);
+  assert.equal(completed, 0);
+  assert.equal(scheduler.pending(), 0);
+  deletion.resolve();
+});
+
+test("cleanup deadline does not wait for an in-flight heartbeat and observes its late rejection", async () => {
+  const scheduler = new ManualCleanupScheduler();
+  const deletion = deferred();
+  const renewal = deferred<Date>();
+  let completed = 0;
+  let released = 0;
+  const cleanup = cleanupGrantReportExportAttemptForAdmin(
+    { attemptId: "attempt-1" },
+    {
+      authorize: async () => ({ internalUser: { id: "admin-1" } }),
+      storage: storage({ removeOwnedObject: async () => deletion.promise }),
+      repository: {
+        claimCleanup: async () => cleanupClaim(),
+        renewCleanup: async () => renewal.promise,
+        completeCleanup: async () => { completed += 1; },
+        releaseCleanup: async () => { released += 1; return true; },
+      } as never,
+      heartbeatMilliseconds: 10,
+      cleanupDeadlineMilliseconds: 25,
+      cleanupScheduler: scheduler,
+    },
+  );
+  await Promise.resolve();
+  await Promise.resolve();
+  await scheduler.advance(10);
+  await scheduler.advance(15);
+  await assert.rejects(cleanup, (error: unknown) => error instanceof GrantReportExportLifecycleError && error.code === "CLEANUP_FAILED");
+  assert.equal(completed, 0);
+  assert.equal(released, 1);
+  assert.equal(scheduler.pending(), 0);
+
+  renewal.reject(new Error("late private database diagnostics"));
+  deletion.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(completed, 0);
+});
+
+test("storage cleanup rejection releases the claim without metadata completion or timer leaks", async () => {
+  const scheduler = new ManualCleanupScheduler();
+  let completed = 0;
+  let released = 0;
+  await assert.rejects(
+    () => cleanupGrantReportExportAttemptForAdmin(
+      { attemptId: "attempt-1" },
+      {
+        authorize: async () => ({ internalUser: { id: "admin-1" } }),
+        storage: storage({ removeOwnedObject: async () => { throw new Error("private provider diagnostics"); } }),
+        repository: {
+          claimCleanup: async () => cleanupClaim(),
+          renewCleanup: async () => new Date(),
+          completeCleanup: async () => { completed += 1; },
+          releaseCleanup: async () => { released += 1; return true; },
+        } as never,
+        heartbeatMilliseconds: 10,
+        cleanupDeadlineMilliseconds: 25,
+        cleanupScheduler: scheduler,
+      },
+    ),
+    (error: unknown) => error instanceof GrantReportExportLifecycleError
+      && error.code === "CLEANUP_FAILED"
+      && !error.message.includes("private provider diagnostics"),
+  );
+  assert.equal(completed, 0);
+  assert.equal(released, 1);
+  assert.equal(scheduler.pending(), 0);
 });
 
 test("authorization denial prevents claims, report reads, generation and storage", async () => {
