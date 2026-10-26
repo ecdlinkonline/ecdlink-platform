@@ -535,6 +535,45 @@ export function psqlArguments(containerId: string, databaseName: string, tabular
   ];
 }
 
+export type PostgresServerVersionAttestation = Readonly<{
+  serverVersionNum: number;
+  major: number;
+}>;
+
+export function parseExactPsqlRow(output: unknown, expectedFieldCount: number): string[] {
+  if (typeof output !== "string" || !Number.isSafeInteger(expectedFieldCount) || expectedFieldCount < 1) {
+    throw new Error("The PostgreSQL identity attestation output is missing, malformed, or ambiguous.");
+  }
+  const match = /^([^\r\n]+)(?:\r?\n)?$/.exec(output);
+  if (!match) throw new Error("The PostgreSQL identity attestation output is missing, malformed, or ambiguous.");
+  const fields = match[1].split("|");
+  if (fields.length !== expectedFieldCount) {
+    throw new Error("The PostgreSQL identity attestation output is missing, malformed, or ambiguous.");
+  }
+  return fields;
+}
+
+export function attestPostgresServerMajor(
+  serverVersionNum: unknown,
+  expectedMajor: number,
+): PostgresServerVersionAttestation {
+  if (!Number.isSafeInteger(expectedMajor) || expectedMajor < 10) {
+    throw new Error("The expected PostgreSQL server major is invalid.");
+  }
+  if (typeof serverVersionNum !== "string" || !/^[1-9]\d{5,}$/.test(serverVersionNum)) {
+    throw new Error("The PostgreSQL server version attestation is missing or malformed.");
+  }
+  const parsedVersionNum = Number(serverVersionNum);
+  if (!Number.isSafeInteger(parsedVersionNum)) {
+    throw new Error("The PostgreSQL server version attestation is missing or malformed.");
+  }
+  const major = Math.floor(parsedVersionNum / 10_000);
+  if (major !== expectedMajor) {
+    throw new Error("The running PostgreSQL server major does not match the approved disposable database major.");
+  }
+  return { serverVersionNum: parsedVersionNum, major };
+}
+
 async function bootstrapSentinel(dockerExecutable: string, containerId: string, databaseName: string, runId: string, nonce: string) {
   await runCommand(dockerExecutable, psqlArguments(containerId, databaseName), {
     timeoutMilliseconds: 15_000,
@@ -542,26 +581,36 @@ async function bootstrapSentinel(dockerExecutable: string, containerId: string, 
   });
 }
 
-async function readPreSentinelDatabaseIdentity(dockerExecutable: string, containerId: string, databaseName: string): Promise<ObservedPreSentinelDatabaseIdentity> {
+async function readPreSentinelDatabaseIdentity(
+  dockerExecutable: string,
+  containerId: string,
+  databaseName: string,
+  expectedPostgresMajor: number,
+): Promise<ObservedPreSentinelDatabaseIdentity> {
   const result = await runCommand(dockerExecutable, psqlArguments(containerId, databaseName, true), {
     timeoutMilliseconds: 15_000,
-    input: "SELECT current_database(), current_user, COALESCE(inet_server_addr()::text, '127.0.0.1'), inet_server_port();",
+    input: "SELECT current_database(), current_user, COALESCE(inet_server_addr()::text, '127.0.0.1'), inet_server_port(), current_setting('server_version_num');",
   });
-  const rows = result.stdout.trim().split(/\r?\n/).filter(Boolean);
-  if (rows.length !== 1) throw new Error("The pre-sentinel database identity is missing or ambiguous.");
-  const [observedDatabaseName, databaseUser, serverAddress, serverPort] = rows[0].split("|");
+  const [observedDatabaseName, databaseUser, serverAddress, serverPort, serverVersionNum] = parseExactPsqlRow(result.stdout, 5);
+  attestPostgresServerMajor(serverVersionNum, expectedPostgresMajor);
   return { databaseName: observedDatabaseName, databaseUser, serverAddress, serverPort: Number(serverPort) };
 }
 
-async function readDatabaseIdentity(dockerExecutable: string, containerId: string, databaseName: string): Promise<ObservedDatabaseIdentity> {
-  const sql = 'SELECT current_database(), current_user, COALESCE(inet_server_addr()::text, \'127.0.0.1\'), inet_server_port(), "purpose", "runId", "nonce" FROM public."EcdlinkIntegrationIdentity";';
+async function readDatabaseIdentity(
+  dockerExecutable: string,
+  containerId: string,
+  databaseName: string,
+  expectedPostgresMajor?: number,
+): Promise<ObservedDatabaseIdentity> {
+  const versionSelection = expectedPostgresMajor === undefined ? "" : ", current_setting('server_version_num')";
+  const sql = `SELECT current_database(), current_user, COALESCE(inet_server_addr()::text, '127.0.0.1'), inet_server_port(), "purpose", "runId", "nonce"${versionSelection} FROM public."EcdlinkIntegrationIdentity";`;
   const result = await runCommand(dockerExecutable, psqlArguments(containerId, databaseName, true), {
     timeoutMilliseconds: 15_000,
     input: sql,
   });
-  const rows = result.stdout.trim().split(/\r?\n/).filter(Boolean);
-  if (rows.length !== 1) throw new Error("The disposable database identity sentinel is missing or ambiguous.");
-  const [observedDatabaseName, databaseUser, serverAddress, serverPort, purpose, runId, nonce] = rows[0].split("|");
+  const fields = parseExactPsqlRow(result.stdout, expectedPostgresMajor === undefined ? 7 : 8);
+  const [observedDatabaseName, databaseUser, serverAddress, serverPort, purpose, runId, nonce, serverVersionNum] = fields;
+  if (expectedPostgresMajor !== undefined) attestPostgresServerMajor(serverVersionNum, expectedPostgresMajor);
   return { databaseName: observedDatabaseName, databaseUser, serverAddress, serverPort: Number(serverPort), purpose, runId, nonce };
 }
 
@@ -635,7 +684,7 @@ async function loadState(path: string) {
   return state;
 }
 
-async function verifyState(state: HarnessState, dockerExecutable: string) {
+async function verifyState(state: HarnessState, dockerExecutable: string, attestServerMajor = true) {
   const dedicated = assertDedicatedIntegrationEnvironment({
     ECDLINK_ALLOW_DISPOSABLE_DB_TESTS: state.approval,
     INTEGRATION_DATABASE_URL: state.integrationDatabaseUrl,
@@ -646,7 +695,16 @@ async function verifyState(state: HarnessState, dockerExecutable: string) {
   const observedContainer = await inspectContainer(dockerExecutable, state.containerId);
   validateObservedContainer(state, observedContainer);
   for (const databaseName of [state.databaseName, state.fullHistoryDatabaseName]) {
-    validateObservedDatabase(state, await readDatabaseIdentity(dockerExecutable, state.containerId, databaseName), databaseName);
+    validateObservedDatabase(
+      state,
+      await readDatabaseIdentity(
+        dockerExecutable,
+        state.containerId,
+        databaseName,
+        attestServerMajor ? state.confirmedProductionPostgresMajor : undefined,
+      ),
+      databaseName,
+    );
   }
   return observedContainer;
 }
@@ -714,14 +772,14 @@ async function prepare() {
       stateProof,
     };
     validateObservedContainer(state, observed);
-    validatePreSentinelDatabaseIdentity(state, await readPreSentinelDatabaseIdentity(dockerExecutable, containerId, databaseName));
+    validatePreSentinelDatabaseIdentity(state, await readPreSentinelDatabaseIdentity(dockerExecutable, containerId, databaseName, state.confirmedProductionPostgresMajor));
     await bootstrapSentinel(dockerExecutable, containerId, databaseName, runId, nonce);
-    validateObservedDatabase(state, await readDatabaseIdentity(dockerExecutable, containerId, databaseName));
+    validateObservedDatabase(state, await readDatabaseIdentity(dockerExecutable, containerId, databaseName, state.confirmedProductionPostgresMajor));
 
     await runCommand(dockerExecutable, ["exec", containerId, "createdb", "--username", POSTGRES_USER, fullHistoryDatabaseName], { timeoutMilliseconds: 15_000 });
-    validatePreSentinelDatabaseIdentity(state, await readPreSentinelDatabaseIdentity(dockerExecutable, containerId, fullHistoryDatabaseName), fullHistoryDatabaseName);
+    validatePreSentinelDatabaseIdentity(state, await readPreSentinelDatabaseIdentity(dockerExecutable, containerId, fullHistoryDatabaseName, state.confirmedProductionPostgresMajor), fullHistoryDatabaseName);
     await bootstrapSentinel(dockerExecutable, containerId, fullHistoryDatabaseName, runId, nonce);
-    validateObservedDatabase(state, await readDatabaseIdentity(dockerExecutable, containerId, fullHistoryDatabaseName), fullHistoryDatabaseName);
+    validateObservedDatabase(state, await readDatabaseIdentity(dockerExecutable, containerId, fullHistoryDatabaseName, state.confirmedProductionPostgresMajor), fullHistoryDatabaseName);
     await writeState(state);
     process.stdout.write(`Disposable integration environment prepared. State file: ${statePath}\n`);
   } catch (error) {
@@ -868,7 +926,7 @@ async function executeTests(statePath: string) {
 async function cleanup(statePath: string) {
   const dockerExecutable = await resolveTrustedDockerCliEntrypoint();
   const state = await loadState(statePath);
-  const observed = await verifyState(state, dockerExecutable);
+  const observed = await verifyState(state, dockerExecutable, false);
   const cleanupTarget = validateCleanupTarget(state, observed);
   await runCommand(dockerExecutable, ["rm", "--force", cleanupTarget.containerId], { timeoutMilliseconds: 30_000 });
   const after = await runCommand(dockerExecutable, ["inspect", cleanupTarget.containerId], { allowFailure: true, timeoutMilliseconds: 5_000 });

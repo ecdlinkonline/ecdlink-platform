@@ -26,6 +26,7 @@ import {
   type DisposableDatabaseConnectionPlan,
 } from "./database-safety";
 import {
+  attestPostgresServerMajor,
   assertTrustedDockerExecutableAgreement,
   assertNoLinksRecursively,
   classifyWindowsTaskkillFailure,
@@ -34,6 +35,7 @@ import {
   GENERAL_COMMAND_OUTPUT_LIMIT_BYTES,
   parseWhoamiUserSidOutput,
   parseArguments,
+  parseExactPsqlRow,
   psqlArguments,
   resolveTrustedTaskkillExecutableForPlatform,
   resolveTrustedIcaclsExecutableForPlatform,
@@ -200,6 +202,81 @@ test("PostgreSQL 18 is the exact supported major and all other or missing majors
   rejectsCode(
     () => validateDisposableDatabasePlan({ ...plan(), confirmedProductionPostgresMajor: undefined as never }),
     "POSTGRES_MAJOR_UNCONFIRMED",
+  );
+});
+
+test("server-reported PostgreSQL 18 version numbers are parsed numerically and attested", () => {
+  assert.deepEqual(attestPostgresServerMajor("180000", 18), { serverVersionNum: 180000, major: 18 });
+  assert.deepEqual(attestPostgresServerMajor("180123", 18), { serverVersionNum: 180123, major: 18 });
+});
+
+test("server-reported PostgreSQL 17, 16, and other majors fail closed", () => {
+  for (const serverVersionNum of ["170000", "160000", "150999", "190000"]) {
+    assert.throws(
+      () => attestPostgresServerMajor(serverVersionNum, 18),
+      /does not match the approved disposable database major/i,
+    );
+  }
+});
+
+test("missing, empty, non-numeric, malformed, ambiguous, and prefix-like versions are rejected", () => {
+  for (const serverVersionNum of [
+    undefined,
+    null,
+    "",
+    " ",
+    "eighteen",
+    "18000",
+    "0180000",
+    "+180000",
+    "-180000",
+    "180000.1",
+    "18e4",
+    "180000 ",
+    "180000\n170000",
+    "180000|unexpected",
+    "18-malformed",
+  ]) {
+    assert.throws(() => attestPostgresServerMajor(serverVersionNum, 18), /missing or malformed/i);
+  }
+});
+
+test("identity query output must contain exactly one row and the expected number of fields", () => {
+  assert.deepEqual(parseExactPsqlRow("database|user|127.0.0.1|5432|180000\n", 5), [
+    "database", "user", "127.0.0.1", "5432", "180000",
+  ]);
+  for (const output of [
+    undefined,
+    "",
+    "\n",
+    "database|user|127.0.0.1|5432",
+    "database|user|127.0.0.1|5432|180000|unexpected",
+    "database|user|127.0.0.1|5432|180000\nother|user|127.0.0.1|5432|180000\n",
+    "database|user|127.0.0.1|5432|180000\n\n",
+  ]) {
+    assert.throws(() => parseExactPsqlRow(output, 5), /missing, malformed, or ambiguous/i);
+  }
+});
+
+test("approved image major, confirmed major, and running server major must independently agree", () => {
+  assert.equal(validateDisposableDatabasePlan(plan()).confirmedProductionPostgresMajor, 18);
+  assert.equal(attestPostgresServerMajor("180006", plan().confirmedProductionPostgresMajor).major, 18);
+  assert.throws(
+    () => attestPostgresServerMajor("170006", plan().confirmedProductionPostgresMajor),
+    /does not match the approved disposable database major/i,
+  );
+});
+
+test("runtime major attestation augments rather than replaces database identity checks", async () => {
+  const source = await readFile(join(process.cwd(), "scripts", "grant-report-export-db-integration.ts"), "utf8");
+  assert.equal(source.match(/current_setting\('server_version_num'\)/g)?.length, 2);
+  assert.match(source, /validatePreSentinelDatabaseIdentity\(state,/);
+  assert.match(source, /validateObservedDatabase\(/);
+  assert.match(source, /await verifyState\(state, dockerExecutable\);/);
+  assert.match(source, /await verifyState\(state, dockerExecutable, false\);/);
+  assert.ok(
+    source.indexOf("attestPostgresServerMajor(serverVersionNum, expectedPostgresMajor)")
+      < source.indexOf("return { databaseName: observedDatabaseName, databaseUser, serverAddress"),
   );
 });
 
