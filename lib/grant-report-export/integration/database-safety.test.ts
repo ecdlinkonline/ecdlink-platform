@@ -56,7 +56,7 @@ import * as integrationTestContext from "./integration-test-context";
 
 const runId = "a".repeat(32);
 const nonce = "b".repeat(64);
-const image = `postgres:16.6-alpine3.20@sha256:${"c".repeat(64)}`;
+const image = "postgres:18.6-alpine3.23@sha256:dec395d8c09c45609d6deb5c2388a07882d64fa59b1d98c1895792e085f57888";
 const databaseName = `ecdlink_export_it_${runId}`;
 const temporaryRoot = `C:\\Temp\\ecdlink-export-it-${runId}`;
 const password = "local-disposable-password";
@@ -131,7 +131,7 @@ function plan(overrides: Partial<DisposableDatabaseConnectionPlan> = {}): Dispos
     fullHistoryDatabaseName: `ecdlink_export_full_it_${runId}`,
     containerName: `ecdlink-export-it-${runId}`,
     postgresImage: image,
-    confirmedProductionPostgresMajor: 16,
+    confirmedProductionPostgresMajor: 18,
     temporaryRoot,
     operatingSystemTemporaryRoot: "C:\\Temp",
     integrationDatabaseUrl: url(),
@@ -192,9 +192,28 @@ test("runtime and migration targets must match the exact generated database", ()
   rejectsCode(() => validateDisposableDatabaseConnections({ ...plan(), databaseName: "wrong" }), "INVALID_DATABASE_NAME");
 });
 
-test("the PostgreSQL image and confirmed production major must be explicit", () => {
-  rejectsCode(() => validateDisposableDatabasePlan({ ...plan(), confirmedProductionPostgresMajor: 17 }), "POSTGRES_MAJOR_UNCONFIRMED");
-  rejectsCode(() => validateDisposableDatabasePlan({ ...plan(), postgresImage: "postgres:16-alpine" }), "UNPINNED_POSTGRES_IMAGE");
+test("PostgreSQL 18 is the exact supported major and all other or missing majors fail closed", () => {
+  assert.equal(validateDisposableDatabasePlan(plan()).confirmedProductionPostgresMajor, 18);
+  for (const confirmedProductionPostgresMajor of [16, 17, 19, Number.NaN]) {
+    rejectsCode(() => validateDisposableDatabasePlan({ ...plan(), confirmedProductionPostgresMajor }), "POSTGRES_MAJOR_UNCONFIRMED");
+  }
+  rejectsCode(
+    () => validateDisposableDatabasePlan({ ...plan(), confirmedProductionPostgresMajor: undefined as never }),
+    "POSTGRES_MAJOR_UNCONFIRMED",
+  );
+});
+
+test("PostgreSQL images require the exact major, official repository shape, immutable digest, and matching tag", () => {
+  for (const postgresImage of [
+    "postgres:18-alpine",
+    "postgres:18.6-alpine3.23",
+    `postgres:18.6-alpine3.23@sha256:${"z".repeat(64)}`,
+    `example/postgres:18.6-alpine3.23@sha256:${"c".repeat(64)}`,
+    `postgres:17.6-alpine3.23@sha256:${"c".repeat(64)}`,
+    `postgres:19.1-alpine3.23@sha256:${"c".repeat(64)}`,
+  ]) {
+    rejectsCode(() => validateDisposableDatabasePlan({ ...plan(), postgresImage }), "UNPINNED_POSTGRES_IMAGE");
+  }
 });
 
 test("container identity, labels, and loopback binding are exact", () => {
@@ -220,7 +239,7 @@ test("live Docker attestation rejects forged state and substituted containers", 
   assert.equal((await verifyLiveDockerAttestation(approved, async () => container())).id, approved.containerId);
   await assert.rejects(() => verifyLiveDockerAttestation(approved, async () => container({ id: "e".repeat(64) })), /container ID/i);
   await assert.rejects(() => verifyLiveDockerAttestation(approved, async () => container({ labels: {} })), /labelled/i);
-  await assert.rejects(() => verifyLiveDockerAttestation(approved, async () => container({ image: image.replace("16.6", "16.7") })), /pinned image/i);
+  await assert.rejects(() => verifyLiveDockerAttestation(approved, async () => container({ image: image.replace("18.6", "18.7") })), /pinned image/i);
   await assert.rejects(() => verifyLiveDockerAttestation(approved, async () => container({ hostPort: 55433 })), /loopback endpoint/i);
   await assert.rejects(() => verifyLiveDockerAttestation(approved, async () => container({ running: false })), /not running/i);
   const alternate = { ...approved, expectedPort: 55433, integrationDatabaseUrl: url(databaseName, "127.0.0.1", 55433), integrationDirectUrl: url(databaseName, "127.0.0.1", 55433) };
