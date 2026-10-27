@@ -47,8 +47,58 @@ type HarnessState = DisposableDatabaseConnectionPlan & {
 };
 
 type CommandResult = { stdout: string; stderr: string };
+type PreparationBasePlan = Omit<DisposableDatabaseConnectionPlan, "integrationDatabaseUrl" | "integrationDirectUrl" | "expectedHost" | "expectedPort">;
+export type PreparationStage =
+  | "before_container_creation"
+  | "container_creation_started"
+  | "container_health"
+  | "container_inspection"
+  | "primary_identity"
+  | "primary_sentinel"
+  | "secondary_creation"
+  | "secondary_identity"
+  | "secondary_sentinel"
+  | "state_write"
+  | "state_publication";
+export type FailedPreparationCleanupClassification =
+  | "PREPARATION_FAILED"
+  | "PREPARATION_FAILED_CLEANUP_CONFIRMED"
+  | "PREPARATION_FAILED_CLEANUP_UNVERIFIED"
+  | "PREPARATION_FAILED_CLEANUP_FAILED";
+export type FailedPreparationCleanupResult = Readonly<{
+  classification: FailedPreparationCleanupClassification;
+  recoveryMaterialPreserved: boolean;
+  sanitizedCleanupError?: Error;
+}>;
+type FailedPreparationCleanupDependencies = Readonly<{
+  inspectContainer: typeof inspectContainer;
+  execute: typeof runCommand;
+  removeRecoveryDirectory: (temporaryRoot: string) => Promise<void>;
+}>;
+export interface StatePathPublicationStream {
+  readonly closed?: boolean;
+  readonly destroyed: boolean;
+  readonly errored?: Error | null;
+  readonly writableEnded: boolean;
+  readonly writableFinished?: boolean;
+  write(message: string, callback: (error?: Error | null) => void): boolean;
+  on(event: "error", listener: (error: Error) => void): unknown;
+  on(event: "close", listener: () => void): unknown;
+  removeListener(event: "error", listener: (error: Error) => void): unknown;
+  removeListener(event: "close", listener: () => void): unknown;
+}
+export type StatePathPublication = Promise<void> & Readonly<{
+  releaseErrorGuard: () => void;
+}>;
+type StatePathPublicationTiming = Readonly<{
+  setTimeout: typeof setTimeout;
+  clearTimeout: typeof clearTimeout;
+  setImmediate: typeof setImmediate;
+  clearImmediate: typeof clearImmediate;
+}>;
 const PROCESS_TREE_TERMINATION_TIMEOUT_MS = 5_000;
 const PROCESS_TREE_DIAGNOSTIC_LIMIT_BYTES = 4_096;
+export const STATE_PATH_PUBLICATION_TIMEOUT_MS = 5_000;
 export const GENERAL_COMMAND_OUTPUT_LIMIT_BYTES = 1_048_576;
 const WINDOWS_TASKKILL_EXECUTABLES = Object.freeze({
   ia32: "C:\\Windows\\Sysnative\\taskkill.exe",
@@ -509,6 +559,185 @@ async function inspectContainer(dockerExecutable: string, containerNameOrId: str
   return parseDockerInspection(result.stdout);
 }
 
+function sanitizedCleanupError(error: unknown) {
+  return new Error(redactSensitiveDiagnostic(error));
+}
+
+async function removeOwnedRecoveryDirectory(temporaryRoot: string) {
+  await assertNoLinksRecursively(temporaryRoot);
+  await rm(temporaryRoot, { recursive: true, force: false });
+}
+
+/**
+ * Best-effort cleanup for a failed preparation attempt. This deliberately uses
+ * only identity created by the current invocation and never discovers a target
+ * by container name. Inconclusive ownership or removal preserves the restricted
+ * recovery directory for a future separately-authorized recovery procedure.
+ */
+export async function cleanupFailedPreparation(input: Readonly<{
+  dockerExecutable: string;
+  basePlan: PreparationBasePlan;
+  password: string;
+  stage: PreparationStage;
+  containerCreationAttempted: boolean;
+  containerId?: string;
+  temporaryRootCreated: boolean;
+}>, dependencies: Partial<FailedPreparationCleanupDependencies> = {}): Promise<FailedPreparationCleanupResult> {
+  const inspect = dependencies.inspectContainer ?? inspectContainer;
+  const execute = dependencies.execute ?? runCommand;
+  const removeRecoveryDirectory = dependencies.removeRecoveryDirectory ?? removeOwnedRecoveryDirectory;
+
+  if (!input.temporaryRootCreated) {
+    return { classification: "PREPARATION_FAILED", recoveryMaterialPreserved: false };
+  }
+
+  if (!input.containerCreationAttempted) {
+    try {
+      await removeRecoveryDirectory(input.basePlan.temporaryRoot);
+      return { classification: "PREPARATION_FAILED_CLEANUP_CONFIRMED", recoveryMaterialPreserved: false };
+    } catch (error) {
+      return {
+        classification: "PREPARATION_FAILED_CLEANUP_FAILED",
+        recoveryMaterialPreserved: true,
+        sanitizedCleanupError: sanitizedCleanupError(error),
+      };
+    }
+  }
+
+  if (!input.containerId || !/^[a-f0-9]{64}$/.test(input.containerId)) {
+    return {
+      classification: "PREPARATION_FAILED_CLEANUP_UNVERIFIED",
+      recoveryMaterialPreserved: true,
+      sanitizedCleanupError: new Error("Docker container creation may have occurred, but no exact valid container identity was returned."),
+    };
+  }
+
+  let targetContainerId: string;
+  try {
+    const observed = await inspect(input.dockerExecutable, input.containerId);
+    if (observed.id !== input.containerId) {
+      throw new Error("The inspected Docker container identity does not match the exact container created by this preparation attempt.");
+    }
+    const integrationDatabaseUrl = createPostgresUrl(input.password, observed.hostPort, input.basePlan.databaseName);
+    const verifiedPlan: DisposableDatabaseConnectionPlan = {
+      ...input.basePlan,
+      integrationDatabaseUrl,
+      integrationDirectUrl: integrationDatabaseUrl,
+      expectedHost: "127.0.0.1",
+      expectedPort: observed.hostPort,
+    };
+    validateObservedContainer(verifiedPlan, observed);
+    targetContainerId = validateCleanupTarget(verifiedPlan, observed).containerId;
+  } catch (error) {
+    return {
+      classification: "PREPARATION_FAILED_CLEANUP_UNVERIFIED",
+      recoveryMaterialPreserved: true,
+      sanitizedCleanupError: sanitizedCleanupError(error),
+    };
+  }
+
+  try {
+    await execute(input.dockerExecutable, ["rm", "--force", targetContainerId], { timeoutMilliseconds: 30_000 });
+  } catch (error) {
+    return {
+      classification: "PREPARATION_FAILED_CLEANUP_FAILED",
+      recoveryMaterialPreserved: true,
+      sanitizedCleanupError: sanitizedCleanupError(error),
+    };
+  }
+
+  try {
+    const after = await execute(input.dockerExecutable, ["inspect", targetContainerId], { allowFailure: true, timeoutMilliseconds: 5_000 });
+    if (!/No such object|No such container/i.test(after.stderr + after.stdout)) {
+      return {
+        classification: "PREPARATION_FAILED_CLEANUP_UNVERIFIED",
+        recoveryMaterialPreserved: true,
+        sanitizedCleanupError: new Error("The verified disposable Docker container may still exist after removal."),
+      };
+    }
+  } catch (error) {
+    return {
+      classification: "PREPARATION_FAILED_CLEANUP_UNVERIFIED",
+      recoveryMaterialPreserved: true,
+      sanitizedCleanupError: sanitizedCleanupError(error),
+    };
+  }
+
+  try {
+    await removeRecoveryDirectory(input.basePlan.temporaryRoot);
+  } catch (error) {
+    return {
+      classification: "PREPARATION_FAILED_CLEANUP_FAILED",
+      recoveryMaterialPreserved: true,
+      sanitizedCleanupError: sanitizedCleanupError(error),
+    };
+  }
+
+  return { classification: "PREPARATION_FAILED_CLEANUP_CONFIRMED", recoveryMaterialPreserved: false };
+}
+
+export function preservePreparationFailure(originalError: unknown, cleanupResult: FailedPreparationCleanupResult) {
+  if (!cleanupResult.sanitizedCleanupError) return originalError;
+  return new AggregateError(
+    [originalError, cleanupResult.sanitizedCleanupError],
+    `${cleanupResult.classification}: disposable harness preparation failed and cleanup did not complete safely.`,
+  );
+}
+
+export async function writeBestEffortDiagnostic(
+  message: string,
+  stream: StatePathPublicationStream = process.stderr,
+  timeoutMilliseconds = STATE_PATH_PUBLICATION_TIMEOUT_MS,
+): Promise<void> {
+  const publication = publishStatePath(message, stream, timeoutMilliseconds);
+  try {
+    await publication;
+  } catch {
+    // Diagnostics are secondary to the already-preserved operational failure.
+  } finally {
+    // Keep the guard through the promise continuation so paired/repeated stream
+    // signals in the same turn cannot replace the primary operational failure.
+    await new Promise<void>((resolvePromise) => setImmediate(resolvePromise));
+    publication.releaseErrorGuard();
+  }
+}
+
+export async function finalizeFailedPreparation(input: Readonly<{
+  originalError: unknown;
+  stage: PreparationStage;
+  cleanup: () => Promise<FailedPreparationCleanupResult>;
+  releasePublicationGuard?: () => void;
+  writeDiagnostic?: (message: string) => Promise<void>;
+}>): Promise<never> {
+  let cleanupResult: FailedPreparationCleanupResult;
+  try {
+    cleanupResult = await input.cleanup();
+  } catch (cleanupError) {
+    cleanupResult = {
+      classification: "PREPARATION_FAILED_CLEANUP_FAILED",
+      recoveryMaterialPreserved: true,
+      sanitizedCleanupError: sanitizedCleanupError(cleanupError),
+    };
+  } finally {
+    input.releasePublicationGuard?.();
+  }
+
+  const primaryFailure = preservePreparationFailure(input.originalError, cleanupResult);
+  const diagnostics = [
+    `${redactSensitiveDiagnostic(input.originalError)}\n`,
+    `${cleanupResult.classification}: failed during ${input.stage}; recovery material ${cleanupResult.recoveryMaterialPreserved ? "was preserved" : "was removed"}.\n`,
+    ...(cleanupResult.sanitizedCleanupError
+      ? [`Sanitized failed-preparation cleanup diagnostic: ${redactSensitiveDiagnostic(cleanupResult.sanitizedCleanupError)}\n`]
+      : []),
+  ].join("");
+  try {
+    await (input.writeDiagnostic ?? writeBestEffortDiagnostic)(diagnostics);
+  } catch {
+    // A caller-supplied diagnostic sink is also strictly best effort.
+  }
+  throw primaryFailure;
+}
+
 async function waitForHealthyContainer(dockerExecutable: string, containerId: string) {
   for (let attempt = 0; attempt < 60; attempt += 1) {
     const status = await runCommand(dockerExecutable, ["inspect", "--format", "{{.State.Health.Status}}", containerId], { allowFailure: true, timeoutMilliseconds: 5_000 });
@@ -666,6 +895,104 @@ async function writeState(state: HarnessState) {
   await restrictStateFile(state.statePath);
 }
 
+/**
+ * Waits until Node reports completion of the stdout write. This covers stream
+ * failures observable during the operation, but cannot make stdout delivery
+ * atomic or prove that a downstream consumer acted on the published path.
+ */
+export function publishStatePath(
+  message: string,
+  stream: StatePathPublicationStream = process.stdout,
+  timeoutMilliseconds = STATE_PATH_PUBLICATION_TIMEOUT_MS,
+  timing: StatePathPublicationTiming = { setTimeout, clearTimeout, setImmediate, clearImmediate },
+): StatePathPublication {
+  if (!Number.isSafeInteger(timeoutMilliseconds) || timeoutMilliseconds <= 0) {
+    return Object.assign(
+      Promise.reject(new Error("The state-path publication timeout must be a positive integer.")),
+      { releaseErrorGuard() {} },
+    );
+  }
+
+  let releaseErrorGuard = () => undefined;
+  const publication = new Promise<void>((resolvePromise, rejectPromise) => {
+    let settled = false;
+    let guardReleased = false;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    let deferredCallbackSettlement: ReturnType<typeof setImmediate> | undefined;
+
+    releaseErrorGuard = () => {
+      if (guardReleased) return;
+      guardReleased = true;
+      stream.removeListener("error", onError);
+      stream.removeListener("close", onClose);
+    };
+    const clearPendingWork = () => {
+      if (timeout !== undefined) timing.clearTimeout(timeout);
+      if (deferredCallbackSettlement !== undefined) timing.clearImmediate(deferredCallbackSettlement);
+      timeout = undefined;
+      deferredCallbackSettlement = undefined;
+    };
+    const settle = (error?: Error, retainGuard = Boolean(error)) => {
+      if (settled) return;
+      settled = true;
+      clearPendingWork();
+      if (error) rejectPromise(error);
+      else {
+        releaseErrorGuard();
+        resolvePromise();
+      }
+      if (!retainGuard) releaseErrorGuard();
+    };
+    function onError(error: Error) {
+      settle(error instanceof Error ? error : new Error("State-path publication failed."));
+    }
+    function onClose() {
+      settle(new Error("The state-path publication stream closed before the write completed."));
+    }
+
+    stream.on("error", onError);
+    stream.on("close", onClose);
+
+    const existingError = stream.errored;
+    if (existingError) {
+      settle(existingError, false);
+      return;
+    }
+    if (stream.destroyed || stream.closed) {
+      settle(new Error("The state-path publication stream is already closed."), false);
+      return;
+    }
+    if (stream.writableEnded || stream.writableFinished) {
+      settle(new Error("The state-path publication stream has already ended."), false);
+      return;
+    }
+
+    timeout = timing.setTimeout(() => {
+      settle(new Error(`State-path publication exceeded the ${timeoutMilliseconds}ms timeout.`));
+    }, timeoutMilliseconds);
+    timeout.unref?.();
+
+    try {
+      // A false return value signals backpressure, not failure. The callback is
+      // the selected completion contract and is therefore always awaited.
+      stream.write(message, (error) => {
+        // A Writable may emit "error" immediately after invoking its write
+        // callback. Defer either outcome for one turn so the listener covers
+        // that race without remaining attached indefinitely.
+        if (!settled && deferredCallbackSettlement === undefined) {
+          deferredCallbackSettlement = timing.setImmediate(() => {
+            deferredCallbackSettlement = undefined;
+            settle(error ?? undefined);
+          });
+        }
+      });
+    } catch (error) {
+      settle(error instanceof Error ? error : new Error("State-path publication failed."), false);
+    }
+  });
+  return Object.assign(publication, { releaseErrorGuard: () => releaseErrorGuard() });
+}
+
 export async function assertNoLinksRecursively(root: string): Promise<void> {
   for (const entry of await readdir(root, { withFileTypes: true })) {
     const path = join(root, entry.name);
@@ -737,12 +1064,17 @@ async function prepare() {
   validateDisposableDatabasePlan(basePlan);
   let containerId: string | undefined;
   let temporaryRootCreated = false;
+  let containerCreationAttempted = false;
+  let preparationStage: PreparationStage = "before_container_creation";
+  let statePathPublication: StatePathPublication | undefined;
   try {
     await mkdir(temporaryRoot, { recursive: false, mode: 0o700 });
     temporaryRootCreated = true;
     await secureHarnessDirectory(temporaryRoot);
     await writeFile(envPath, `POSTGRES_USER=${POSTGRES_USER}\nPOSTGRES_PASSWORD=${password}\nPOSTGRES_DB=${databaseName}\n`, { flag: "wx", mode: 0o600 });
     await restrictStateFile(envPath);
+    preparationStage = "container_creation_started";
+    containerCreationAttempted = true;
     const started = await runCommand(dockerExecutable, [
       "run", "--detach", "--name", containerName,
       "--label", `${DISPOSABLE_CONTAINER_PURPOSE_LABEL}=${DISPOSABLE_DATABASE_PURPOSE}`,
@@ -754,7 +1086,9 @@ async function prepare() {
       bootstrap.postgresImage,
     ], { timeoutMilliseconds: 60_000 });
     containerId = started.stdout.trim();
+    preparationStage = "container_health";
     await waitForHealthyContainer(dockerExecutable, containerId);
+    preparationStage = "container_inspection";
     const observed = await inspectContainer(dockerExecutable, containerId);
     const primaryUrl = createPostgresUrl(password, observed.hostPort, databaseName);
     const state: HarnessState = {
@@ -772,32 +1106,39 @@ async function prepare() {
       stateProof,
     };
     validateObservedContainer(state, observed);
+    preparationStage = "primary_identity";
     validatePreSentinelDatabaseIdentity(state, await readPreSentinelDatabaseIdentity(dockerExecutable, containerId, databaseName, state.confirmedProductionPostgresMajor));
+    preparationStage = "primary_sentinel";
     await bootstrapSentinel(dockerExecutable, containerId, databaseName, runId, nonce);
     validateObservedDatabase(state, await readDatabaseIdentity(dockerExecutable, containerId, databaseName, state.confirmedProductionPostgresMajor));
 
+    preparationStage = "secondary_creation";
     await runCommand(dockerExecutable, ["exec", containerId, "createdb", "--username", POSTGRES_USER, fullHistoryDatabaseName], { timeoutMilliseconds: 15_000 });
+    preparationStage = "secondary_identity";
     validatePreSentinelDatabaseIdentity(state, await readPreSentinelDatabaseIdentity(dockerExecutable, containerId, fullHistoryDatabaseName, state.confirmedProductionPostgresMajor), fullHistoryDatabaseName);
+    preparationStage = "secondary_sentinel";
     await bootstrapSentinel(dockerExecutable, containerId, fullHistoryDatabaseName, runId, nonce);
     validateObservedDatabase(state, await readDatabaseIdentity(dockerExecutable, containerId, fullHistoryDatabaseName, state.confirmedProductionPostgresMajor), fullHistoryDatabaseName);
+    preparationStage = "state_write";
     await writeState(state);
-    process.stdout.write(`Disposable integration environment prepared. State file: ${statePath}\n`);
+    preparationStage = "state_publication";
+    statePathPublication = publishStatePath(`Disposable integration environment prepared. State file: ${statePath}\n`);
+    await statePathPublication;
   } catch (error) {
-    process.stderr.write(`${redactSensitiveDiagnostic(error)}\n`);
-    process.stderr.write(containerId
-      ? `Container ${containerId.slice(0, 12)} was not removed automatically; verify its identity manually before cleanup.\n`
-      : "No Docker container identity was returned.\n");
-    const failures: unknown[] = [error];
-    if (temporaryRootCreated) {
-      try {
-        await assertNoLinksRecursively(temporaryRoot);
-        await rm(temporaryRoot, { recursive: true, force: false });
-      } catch (cleanupError) {
-        failures.push(cleanupError);
-      }
-    }
-    if (failures.length > 1) throw new AggregateError(failures, "Disposable harness preparation failed and temporary credential cleanup was incomplete.");
-    throw error;
+    await finalizeFailedPreparation({
+      originalError: error,
+      stage: preparationStage,
+      releasePublicationGuard: statePathPublication?.releaseErrorGuard,
+      cleanup: () => cleanupFailedPreparation({
+        dockerExecutable,
+        basePlan,
+        password,
+        stage: preparationStage,
+        containerCreationAttempted,
+        containerId,
+        temporaryRootCreated,
+      }),
+    });
   }
 }
 
@@ -950,8 +1291,8 @@ async function main() {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  main().catch((error) => {
-    process.stderr.write(`${redactSensitiveDiagnostic(error)}\n`);
+  main().catch(async (error) => {
     process.exitCode = 1;
+    await writeBestEffortDiagnostic(`${redactSensitiveDiagnostic(error)}\n`);
   });
 }

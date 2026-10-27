@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import test from "node:test";
 import { access, mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -30,6 +31,8 @@ import {
   assertTrustedDockerExecutableAgreement,
   assertNoLinksRecursively,
   classifyWindowsTaskkillFailure,
+  cleanupFailedPreparation,
+  finalizeFailedPreparation,
   appendBoundedOutput,
   createBoundedOutputCapture,
   GENERAL_COMMAND_OUTPUT_LIMIT_BYTES,
@@ -37,6 +40,8 @@ import {
   parseArguments,
   parseExactPsqlRow,
   psqlArguments,
+  preservePreparationFailure,
+  publishStatePath,
   resolveTrustedTaskkillExecutableForPlatform,
   resolveTrustedIcaclsExecutableForPlatform,
   resolveTrustedWhoamiExecutableForPlatform,
@@ -46,12 +51,15 @@ import {
   renderBoundedOutput,
   sanitizeWindowsTerminationOutput,
   secureWindowsHarnessPath,
+  STATE_PATH_PUBLICATION_TIMEOUT_MS,
   trustedTaskkillExecutableCandidate,
   trustedIcaclsExecutableCandidate,
   trustedWhoamiExecutableCandidate,
   trustedDockerExecutableCandidates,
   validateIsolatedPrismaDirectory,
   validateWindowsSid,
+  writeBestEffortDiagnostic,
+  type PreparationStage,
 } from "../../../scripts/grant-report-export-db-integration";
 import { bounded, createIntegrationClient } from "./integration-test-context";
 import * as integrationTestContext from "./integration-test-context";
@@ -63,6 +71,24 @@ const databaseName = `ecdlink_export_it_${runId}`;
 const temporaryRoot = `C:\\Temp\\ecdlink-export-it-${runId}`;
 const password = "local-disposable-password";
 const PROCESS_TREE_TEST_NAME = "timed-out child process trees are terminated before returning";
+
+class MockPublicationStream extends EventEmitter {
+  closed = false;
+  destroyed = false;
+  errored: Error | null = null;
+  writableEnded = false;
+  writableFinished = false;
+  messages: string[] = [];
+  writeBehavior: (message: string, callback: (error?: Error | null) => void) => boolean = (message, callback) => {
+    this.messages.push(message);
+    callback();
+    return true;
+  };
+
+  write(message: string, callback: (error?: Error | null) => void) {
+    return this.writeBehavior(message, callback);
+  }
+}
 
 type SyntheticProcessIdentity = { token: string; pid: number; parentPid?: number; descendantPid?: number };
 
@@ -159,6 +185,48 @@ function container(overrides: Record<string, unknown> = {}) {
     postgresDatabase: databaseName,
     postgresUser: "ecdlink_it",
     ...overrides,
+  };
+}
+
+function preparationBasePlan() {
+  const {
+    integrationDatabaseUrl: _integrationDatabaseUrl,
+    integrationDirectUrl: _integrationDirectUrl,
+    expectedHost: _expectedHost,
+    expectedPort: _expectedPort,
+    ...basePlan
+  } = plan();
+  return basePlan;
+}
+
+function failedPreparationInput(overrides: Partial<Parameters<typeof cleanupFailedPreparation>[0]> = {}) {
+  return {
+    dockerExecutable: "/usr/bin/docker",
+    basePlan: preparationBasePlan(),
+    password,
+    stage: "container_health" as PreparationStage,
+    containerCreationAttempted: true,
+    containerId: "d".repeat(64),
+    temporaryRootCreated: true,
+    ...overrides,
+  };
+}
+
+function successfulFailedPreparationDependencies(
+  operations: string[] = [],
+  observed = container(),
+) {
+  return {
+    inspectContainer: async (_dockerExecutable: string, requestedId: string) => {
+      operations.push(`inspect:${requestedId}`);
+      return observed;
+    },
+    execute: async (_command: string, args: string[]) => {
+      operations.push(args.join(" "));
+      if (args[0] === "inspect") return { stdout: "", stderr: "Error: No such container" };
+      return { stdout: "", stderr: "" };
+    },
+    removeRecoveryDirectory: async (path: string) => { operations.push(`remove-recovery:${path}`); },
   };
 }
 
@@ -361,6 +429,499 @@ test("cleanup refuses unverified containers and paths outside the operating-syst
   assert.equal(validateCleanupTarget(plan(), container()).containerId, "d".repeat(64));
   rejectsCode(() => validateCleanupTarget({ ...plan(), temporaryRoot: "C:\\workspace" }, container()), "UNSAFE_TEMPORARY_ROOT");
   rejectsCode(() => validateCleanupTarget(plan(), container({ id: "short" })), "INVALID_CONTAINER_ID");
+});
+
+test("state-path publication awaits successful callback and preserves the exact output contract", async () => {
+  const stream = new MockPublicationStream();
+  let callback: ((error?: Error | null) => void) | undefined;
+  stream.writeBehavior = (message, receivedCallback) => {
+    stream.messages.push(message);
+    callback = receivedCallback;
+    return true;
+  };
+  const message = "Disposable integration environment prepared. State file: C:\\Temp\\state.json\n";
+  let completed = false;
+  const publication = publishStatePath(message, stream).then(() => { completed = true; });
+  await Promise.resolve();
+  assert.equal(completed, false);
+  assert.deepEqual(stream.messages, [message]);
+  callback?.();
+  await publication;
+  assert.equal(completed, true);
+  assert.deepEqual(stream.messages, [message]);
+});
+
+test("state-path publication observes synchronous, callback, event, and close failures", async () => {
+  const synchronous = new MockPublicationStream();
+  const synchronousError = new Error("synchronous publication failure");
+  synchronous.writeBehavior = () => { throw synchronousError; };
+  await assert.rejects(() => publishStatePath("message", synchronous), (error) => error === synchronousError);
+  assert.equal(synchronous.listenerCount("error"), 0);
+
+  const callbackStream = new MockPublicationStream();
+  const callbackError = new Error("callback publication failure");
+  callbackStream.writeBehavior = (_message, callback) => {
+    callback(callbackError);
+    return true;
+  };
+  const callbackPublication = publishStatePath("message", callbackStream);
+  await assert.rejects(() => callbackPublication, (error) => error === callbackError);
+  assert.equal(callbackStream.listenerCount("error"), 1);
+  callbackPublication.releaseErrorGuard();
+
+  const eventStream = new MockPublicationStream();
+  const eventError = new Error("event publication failure");
+  eventStream.writeBehavior = () => {
+    eventStream.emit("error", eventError);
+    return true;
+  };
+  const eventPublication = publishStatePath("message", eventStream);
+  await assert.rejects(() => eventPublication, (error) => error === eventError);
+  assert.equal(eventStream.listenerCount("error"), 1);
+  eventPublication.releaseErrorGuard();
+
+  const closedStream = new MockPublicationStream();
+  closedStream.writeBehavior = () => {
+    closedStream.emit("close");
+    return true;
+  };
+  const closedPublication = publishStatePath("message", closedStream);
+  await assert.rejects(() => closedPublication, /closed before the write completed/i);
+  assert.equal(closedStream.listenerCount("error"), 1);
+  closedPublication.releaseErrorGuard();
+});
+
+test("state-path publication rejects streams that are already errored, destroyed, closed, or ended", async () => {
+  const existingError = new Error("existing stream failure");
+  for (const [stream, expected] of [
+    [Object.assign(new MockPublicationStream(), { errored: existingError }), existingError],
+    [Object.assign(new MockPublicationStream(), { destroyed: true }), /already closed/i],
+    [Object.assign(new MockPublicationStream(), { closed: true }), /already closed/i],
+    [Object.assign(new MockPublicationStream(), { writableEnded: true }), /already ended/i],
+    [Object.assign(new MockPublicationStream(), { writableFinished: true }), /already ended/i],
+  ] as const) {
+    await assert.rejects(() => publishStatePath("message", stream), expected);
+    assert.deepEqual(stream.messages, []);
+    assert.equal(stream.listenerCount("error"), 0);
+    assert.equal(stream.listenerCount("close"), 0);
+  }
+});
+
+test("state-path publication treats backpressure as non-fatal and still awaits callback", async () => {
+  const stream = new MockPublicationStream();
+  stream.writeBehavior = (message, callback) => {
+    stream.messages.push(message);
+    setImmediate(callback);
+    return false;
+  };
+  await publishStatePath("message", stream);
+  assert.deepEqual(stream.messages, ["message"]);
+});
+
+test("state-path publication retains its guard after timeout until cleanup releases it", async () => {
+  const stream = new MockPublicationStream();
+  let callback: ((error?: Error | null) => void) | undefined;
+  stream.writeBehavior = (_message, receivedCallback) => {
+    callback = receivedCallback;
+    return true;
+  };
+  const publication = publishStatePath("message", stream, 5);
+  await assert.rejects(() => publication, /exceeded the 5ms timeout/i);
+  assert.equal(stream.listenerCount("error"), 1);
+  assert.equal(stream.listenerCount("close"), 1);
+  stream.emit("error", new Error("late timeout failure"));
+  stream.emit("error", new Error("repeated late timeout failure"));
+  stream.emit("close");
+  callback?.();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(stream.listenerCount("error"), 1);
+  publication.releaseErrorGuard();
+  assert.equal(stream.listenerCount("error"), 0);
+  assert.equal(stream.listenerCount("close"), 0);
+  assert.throws(() => stream.emit("error", new Error("outside the bounded cleanup guard")), /outside the bounded cleanup guard/);
+});
+
+test("state-path publication settles once when callback and error signals race", async () => {
+  const stream = new MockPublicationStream();
+  const error = new Error("paired stream failure");
+  stream.writeBehavior = (_message, callback) => {
+    callback(error);
+    stream.emit("error", error);
+    stream.emit("error", new Error("later duplicate signal"));
+    return true;
+  };
+  const publication = publishStatePath("message", stream);
+  await assert.rejects(() => publication, (observed) => observed === error);
+  assert.equal(stream.listenerCount("error"), 1);
+  assert.equal(stream.listenerCount("close"), 1);
+  stream.emit("error", new Error("post-settlement repeated signal"));
+  publication.releaseErrorGuard();
+  assert.equal(stream.listenerCount("error"), 0);
+  assert.equal(stream.listenerCount("close"), 0);
+
+  const successThenError = new MockPublicationStream();
+  const lateError = new Error("error emitted after successful callback");
+  successThenError.writeBehavior = (_message, callback) => {
+    callback();
+    successThenError.emit("error", lateError);
+    return true;
+  };
+  const successThenErrorPublication = publishStatePath("message", successThenError);
+  await assert.rejects(() => successThenErrorPublication, (observed) => observed === lateError);
+  assert.equal(successThenError.listenerCount("error"), 1);
+  successThenErrorPublication.releaseErrorGuard();
+  assert.equal(successThenError.listenerCount("error"), 0);
+  assert.equal(successThenError.listenerCount("close"), 0);
+});
+
+test("state-path publication clears its timeout and listeners on success", async () => {
+  const stream = new MockPublicationStream();
+  const timeoutHandle = { unref() {} } as unknown as ReturnType<typeof setTimeout>;
+  let clearedTimeout: ReturnType<typeof setTimeout> | undefined;
+  const timing = {
+    setTimeout: (() => timeoutHandle) as unknown as typeof setTimeout,
+    clearTimeout: ((handle: ReturnType<typeof setTimeout>) => { clearedTimeout = handle; }) as typeof clearTimeout,
+    setImmediate,
+    clearImmediate,
+  };
+  await publishStatePath("message", stream, STATE_PATH_PUBLICATION_TIMEOUT_MS, timing);
+  assert.equal(clearedTimeout, timeoutHandle);
+  assert.equal(stream.listenerCount("error"), 0);
+  assert.equal(stream.listenerCount("close"), 0);
+});
+
+test("state-path publication clears its timeout and deferred callback on failure", async () => {
+  const stream = new MockPublicationStream();
+  const timeoutHandle = { unref() {} } as unknown as ReturnType<typeof setTimeout>;
+  const immediateHandle = {} as ReturnType<typeof setImmediate>;
+  let clearedTimeout: ReturnType<typeof setTimeout> | undefined;
+  let clearedImmediate: ReturnType<typeof setImmediate> | undefined;
+  let emitError: (() => void) | undefined;
+  const timing = {
+    setTimeout: (() => timeoutHandle) as unknown as typeof setTimeout,
+    clearTimeout: ((handle: ReturnType<typeof setTimeout>) => { clearedTimeout = handle; }) as typeof clearTimeout,
+    setImmediate: ((handler: () => void) => {
+      emitError = () => {
+        stream.emit("error", new Error("paired event failure"));
+        handler();
+      };
+      return immediateHandle;
+    }) as typeof setImmediate,
+    clearImmediate: ((handle: ReturnType<typeof setImmediate>) => { clearedImmediate = handle; }) as typeof clearImmediate,
+  };
+  stream.writeBehavior = (_message, callback) => {
+    callback(new Error("callback failure"));
+    return true;
+  };
+  const publication = publishStatePath("message", stream, STATE_PATH_PUBLICATION_TIMEOUT_MS, timing);
+  emitError?.();
+  await assert.rejects(() => publication, /paired event failure/);
+  assert.equal(clearedTimeout, timeoutHandle);
+  assert.equal(clearedImmediate, immediateHandle);
+  assert.equal(stream.listenerCount("error"), 1);
+  publication.releaseErrorGuard();
+  assert.equal(stream.listenerCount("error"), 0);
+  assert.equal(stream.listenerCount("close"), 0);
+});
+
+test("publication rejection remains guarded and primary while verified failed-preparation cleanup runs", async () => {
+  const stream = new MockPublicationStream();
+  const publicationError = new Error("state path publication failed");
+  stream.writeBehavior = (_message, callback) => {
+    callback(publicationError);
+    return true;
+  };
+  const operations: string[] = [];
+  let thrown: unknown;
+  const publication = publishStatePath("message", stream);
+  try {
+    await publication;
+  } catch (error) {
+    await assert.rejects(() => finalizeFailedPreparation({
+      originalError: error,
+      stage: "state_publication",
+      releasePublicationGuard: publication.releaseErrorGuard,
+      cleanup: async () => {
+        assert.equal(stream.listenerCount("error"), 1);
+        stream.emit("error", new Error("late failure during cleanup"));
+        stream.emit("error", new Error("repeated failure during cleanup"));
+        stream.emit("close");
+        return cleanupFailedPreparation(
+          failedPreparationInput({ stage: "state_publication" }),
+          successfulFailedPreparationDependencies(operations),
+        );
+      },
+      writeDiagnostic: async () => undefined,
+    }), (finalError) => {
+      thrown = finalError;
+      return finalError === publicationError;
+    });
+  }
+  assert.equal(thrown, publicationError);
+  assert.equal(stream.listenerCount("error"), 0);
+  assert.equal(stream.listenerCount("close"), 0);
+  assert.deepEqual(operations, [
+    `inspect:${"d".repeat(64)}`,
+    `rm --force ${"d".repeat(64)}`,
+    `inspect ${"d".repeat(64)}`,
+    `remove-recovery:${temporaryRoot}`,
+  ]);
+});
+
+test("failed-preparation finalization completes cleanup before best-effort diagnostics", async () => {
+  const operations: string[] = [];
+  const primary = new Error("primary preparation failure");
+  await assert.rejects(() => finalizeFailedPreparation({
+    originalError: primary,
+    stage: "state_publication",
+    cleanup: async () => {
+      operations.push("cleanup:start");
+      await new Promise<void>((resolvePromise) => setImmediate(resolvePromise));
+      operations.push("cleanup:complete");
+      return { classification: "PREPARATION_FAILED_CLEANUP_CONFIRMED", recoveryMaterialPreserved: false };
+    },
+    releasePublicationGuard: () => operations.push("guard:released"),
+    writeDiagnostic: async () => {
+      operations.push("diagnostic:start");
+      throw new Error("broken stderr");
+    },
+  }), (error) => error === primary);
+  assert.deepEqual(operations, ["cleanup:start", "cleanup:complete", "guard:released", "diagnostic:start"]);
+});
+
+test("unexpected cleanup failure and broken diagnostics preserve the original failure first", async () => {
+  const primary = new Error("primary token=secret-value");
+  let observed: unknown;
+  await assert.rejects(() => finalizeFailedPreparation({
+    originalError: primary,
+    stage: "container_health",
+    cleanup: async () => { throw new Error("cleanup password=cleanup-secret"); },
+    writeDiagnostic: async () => { throw new Error("stderr failed"); },
+  }), (error) => {
+    observed = error;
+    return error instanceof AggregateError && error.errors[0] === primary;
+  });
+  assert.ok(observed instanceof AggregateError);
+  assert.doesNotMatch(redactSensitiveDiagnostic(observed), /secret-value|cleanup-secret/);
+});
+
+test("best-effort diagnostics absorb stream failures, bound timeouts, and release their scoped guard", async () => {
+  for (const behavior of ["callback", "event", "close", "throw", "timeout"] as const) {
+    const stream = new MockPublicationStream();
+    stream.writeBehavior = (_message, callback) => {
+      if (behavior === "callback") callback(new Error("callback diagnostic failure"));
+      if (behavior === "event") {
+        stream.emit("error", new Error("diagnostic event failure"));
+        stream.emit("error", new Error("repeated diagnostic event failure"));
+      }
+      if (behavior === "close") stream.emit("close");
+      if (behavior === "throw") throw new Error("synchronous diagnostic failure");
+      return true;
+    };
+    await writeBestEffortDiagnostic("sanitized diagnostic\n", stream, 10);
+    assert.equal(stream.listenerCount("error"), 0);
+    assert.equal(stream.listenerCount("close"), 0);
+  }
+
+  const destroyed = Object.assign(new MockPublicationStream(), { destroyed: true });
+  await writeBestEffortDiagnostic("sanitized diagnostic\n", destroyed, 10);
+  assert.deepEqual(destroyed.messages, []);
+});
+
+test("publication and cleanup failures preserve the publication error first and sanitize cleanup diagnostics", async () => {
+  const publicationError = new Error("publication token=state-secret");
+  const combined = preservePreparationFailure(publicationError, {
+    classification: "PREPARATION_FAILED_CLEANUP_FAILED",
+    recoveryMaterialPreserved: true,
+    sanitizedCleanupError: new Error("sanitized cleanup failure"),
+  });
+  assert.ok(combined instanceof AggregateError);
+  assert.equal(combined.errors[0], publicationError);
+  assert.equal(combined.errors[1].message, "sanitized cleanup failure");
+  assert.doesNotMatch(redactSensitiveDiagnostic(combined), /state-secret/);
+});
+
+test("failed preparation before container creation removes only recovery material", async () => {
+  const operations: string[] = [];
+  const result = await cleanupFailedPreparation(failedPreparationInput({
+    stage: "before_container_creation",
+    containerCreationAttempted: false,
+    containerId: undefined,
+  }), successfulFailedPreparationDependencies(operations));
+  assert.deepEqual(result, {
+    classification: "PREPARATION_FAILED_CLEANUP_CONFIRMED",
+    recoveryMaterialPreserved: false,
+  });
+  assert.deepEqual(operations, [`remove-recovery:${temporaryRoot}`]);
+});
+
+test("verified failure stages remove the exact container before recovery material", async () => {
+  const stages: PreparationStage[] = [
+    "container_health",
+    "container_inspection",
+    "primary_identity",
+    "primary_sentinel",
+    "secondary_creation",
+    "secondary_identity",
+    "secondary_sentinel",
+    "state_write",
+    "state_publication",
+  ];
+  for (const stage of stages) {
+    const operations: string[] = [];
+    const result = await cleanupFailedPreparation(
+      failedPreparationInput({ stage }),
+      successfulFailedPreparationDependencies(operations),
+    );
+    assert.equal(result.classification, "PREPARATION_FAILED_CLEANUP_CONFIRMED", stage);
+    assert.equal(result.recoveryMaterialPreserved, false, stage);
+    assert.deepEqual(operations, [
+      `inspect:${"d".repeat(64)}`,
+      `rm --force ${"d".repeat(64)}`,
+      `inspect ${"d".repeat(64)}`,
+      `remove-recovery:${temporaryRoot}`,
+    ], stage);
+  }
+});
+
+test("ambiguous or malformed Docker creation preserves recovery material without inspection or removal", async () => {
+  for (const containerId of [undefined, "", "short", "g".repeat(64)]) {
+    const operations: string[] = [];
+    const result = await cleanupFailedPreparation(
+      failedPreparationInput({ stage: "container_creation_started", containerId }),
+      successfulFailedPreparationDependencies(operations),
+    );
+    assert.equal(result.classification, "PREPARATION_FAILED_CLEANUP_UNVERIFIED");
+    assert.equal(result.recoveryMaterialPreserved, true);
+    assert.deepEqual(operations, []);
+  }
+});
+
+test("failed preparation refuses every container ownership mismatch", async () => {
+  const mismatches = [
+    container({ id: "e".repeat(64) }),
+    container({ name: "other" }),
+    container({ labels: { ...container().labels, [DISPOSABLE_CONTAINER_PURPOSE_LABEL]: "other" } }),
+    container({ labels: { ...container().labels, [DISPOSABLE_CONTAINER_RUN_LABEL]: "e".repeat(32) } }),
+    container({ image: image.replace("18.6", "18.7") }),
+    container({ hostIp: "0.0.0.0" }),
+  ];
+  for (const observed of mismatches) {
+    const operations: string[] = [];
+    const result = await cleanupFailedPreparation(
+      failedPreparationInput(),
+      successfulFailedPreparationDependencies(operations, observed),
+    );
+    assert.equal(result.classification, "PREPARATION_FAILED_CLEANUP_UNVERIFIED");
+    assert.equal(result.recoveryMaterialPreserved, true);
+    assert.equal(operations.some((operation) => operation.startsWith("rm ")), false);
+    assert.equal(operations.some((operation) => operation.startsWith("remove-recovery:")), false);
+  }
+});
+
+test("inspection failure preserves recovery material and sanitizes provider diagnostics", async () => {
+  const result = await cleanupFailedPreparation(failedPreparationInput(), {
+    inspectContainer: async () => { throw new Error("password=hunter2 postgresql://user:pass@127.0.0.1:5432/db"); },
+    execute: async () => { throw new Error("must not execute"); },
+    removeRecoveryDirectory: async () => { throw new Error("must not remove"); },
+  });
+  assert.equal(result.classification, "PREPARATION_FAILED_CLEANUP_UNVERIFIED");
+  assert.equal(result.recoveryMaterialPreserved, true);
+  assert.doesNotMatch(result.sanitizedCleanupError?.message ?? "", /hunter2|user:pass/);
+  assert.match(result.sanitizedCleanupError?.message ?? "", /REDACTED/);
+});
+
+test("removal failure and unconfirmed absence preserve the recovery directory", async () => {
+  let removedRecovery = false;
+  const removalFailure = await cleanupFailedPreparation(failedPreparationInput(), {
+    ...successfulFailedPreparationDependencies(),
+    execute: async (_command, args) => {
+      if (args[0] === "rm") throw new Error("token=provider-secret");
+      return { stdout: "", stderr: "" };
+    },
+    removeRecoveryDirectory: async () => { removedRecovery = true; },
+  });
+  assert.equal(removalFailure.classification, "PREPARATION_FAILED_CLEANUP_FAILED");
+  assert.equal(removalFailure.recoveryMaterialPreserved, true);
+  assert.equal(removedRecovery, false);
+  assert.doesNotMatch(removalFailure.sanitizedCleanupError?.message ?? "", /provider-secret/);
+
+  const stillPresent = await cleanupFailedPreparation(failedPreparationInput(), {
+    ...successfulFailedPreparationDependencies(),
+    execute: async () => ({ stdout: JSON.stringify([{ Id: "d".repeat(64) }]), stderr: "" }),
+    removeRecoveryDirectory: async () => { removedRecovery = true; },
+  });
+  assert.equal(stillPresent.classification, "PREPARATION_FAILED_CLEANUP_UNVERIFIED");
+  assert.equal(stillPresent.recoveryMaterialPreserved, true);
+  assert.equal(removedRecovery, false);
+});
+
+test("recovery-directory deletion failure is reported after confirmed container absence", async () => {
+  const operations: string[] = [];
+  const dependencies = successfulFailedPreparationDependencies(operations);
+  const result = await cleanupFailedPreparation(failedPreparationInput(), {
+    ...dependencies,
+    removeRecoveryDirectory: async (path) => {
+      operations.push(`remove-recovery:${path}`);
+      throw new Error("recovery deletion failed");
+    },
+  });
+  assert.equal(result.classification, "PREPARATION_FAILED_CLEANUP_FAILED");
+  assert.equal(result.recoveryMaterialPreserved, true);
+  assert.deepEqual(operations.slice(0, 3), [
+    `inspect:${"d".repeat(64)}`,
+    `rm --force ${"d".repeat(64)}`,
+    `inspect ${"d".repeat(64)}`,
+  ]);
+  assert.match(result.sanitizedCleanupError?.message ?? "", /recovery deletion failed/);
+});
+
+test("the original preparation error remains primary when cleanup also fails", () => {
+  const original = new Error("primary preparation failure");
+  const combined = preservePreparationFailure(original, {
+    classification: "PREPARATION_FAILED_CLEANUP_FAILED",
+    recoveryMaterialPreserved: true,
+    sanitizedCleanupError: new Error("sanitized cleanup failure"),
+  });
+  assert.ok(combined instanceof AggregateError);
+  assert.equal(combined.errors[0], original);
+  assert.match(combined.message, /PREPARATION_FAILED_CLEANUP_FAILED/);
+  assert.equal(preservePreparationFailure(original, {
+    classification: "PREPARATION_FAILED_CLEANUP_CONFIRMED",
+    recoveryMaterialPreserved: false,
+  }), original);
+});
+
+test("a repeated failed-preparation cleanup never discovers or removes a container by name", async () => {
+  const firstOperations: string[] = [];
+  const first = await cleanupFailedPreparation(failedPreparationInput(), successfulFailedPreparationDependencies(firstOperations));
+  assert.equal(first.classification, "PREPARATION_FAILED_CLEANUP_CONFIRMED");
+
+  const secondOperations: string[] = [];
+  const second = await cleanupFailedPreparation(failedPreparationInput(), {
+    ...successfulFailedPreparationDependencies(secondOperations),
+    inspectContainer: async (_dockerExecutable, requestedId) => {
+      secondOperations.push(`inspect:${requestedId}`);
+      throw new Error("No such container");
+    },
+  });
+  assert.equal(second.classification, "PREPARATION_FAILED_CLEANUP_UNVERIFIED");
+  assert.deepEqual(secondOperations, [`inspect:${"d".repeat(64)}`]);
+  assert.equal(secondOperations.some((operation) => operation.includes(`ecdlink-export-it-${runId}`)), false);
+});
+
+test("successful preparation and normal cleanup contracts remain structurally unchanged", async () => {
+  const source = await readFile(join(process.cwd(), "scripts", "grant-report-export-db-integration.ts"), "utf8");
+  assert.match(source, /Disposable integration environment prepared\. State file: \$\{statePath\}\\n/);
+  assert.ok(source.indexOf("await writeState(state);") < source.indexOf("Disposable integration environment prepared. State file:"));
+  assert.match(source, /statePathPublication = publishStatePath\(`Disposable integration environment prepared\. State file: \$\{statePath\}\\n`\);/);
+  assert.ok(source.indexOf("await statePathPublication;") < source.indexOf("} catch (error) {", source.indexOf("async function prepare()")));
+  assert.ok(source.indexOf("await finalizeFailedPreparation") > source.indexOf("} catch (error) {", source.indexOf("async function prepare()")));
+  assert.ok(source.indexOf("cleanup: () => cleanupFailedPreparation") < source.indexOf("writeBestEffortDiagnostic", source.indexOf("async function prepare()")) || source.includes("writeDiagnostic ?? writeBestEffortDiagnostic"));
+  assert.match(source, /const observed = await verifyState\(state, dockerExecutable, false\);/);
+  assert.match(source, /const cleanupTarget = validateCleanupTarget\(state, observed\);/);
+  assert.match(source, /attestPostgresServerMajor\(serverVersionNum, expectedPostgresMajor\)/);
+  assert.match(source, /cannot make stdout delivery\s+\* atomic or prove that a downstream consumer acted on the published path/);
 });
 
 test("diagnostics redact URLs and credential-like values", () => {
@@ -622,7 +1183,7 @@ test("credential-bearing files are written only after the harness directory ACL 
   const stateWrite = source.indexOf("await writeState(state)");
   const preparationStart = source.indexOf("async function prepare()");
   const guardedPreparation = source.indexOf("  try {", preparationStart);
-  const failedPreparationCleanup = source.indexOf("await assertNoLinksRecursively(temporaryRoot)", credentialWrite);
+  const failedPreparationCleanup = source.indexOf("cleanup: () => cleanupFailedPreparation", preparationStart);
   assert.ok(directoryCreation >= 0 && directoryAcl > directoryCreation);
   assert.ok(guardedPreparation > preparationStart && guardedPreparation < directoryCreation);
   assert.ok(credentialWrite > directoryAcl);
